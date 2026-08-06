@@ -1,0 +1,18 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+
+class StaffRolePermission extends Model
+{
+    protected $fillable = [
+        'staff_role_id',
+        'permission_key',
+    ];
+
+    public function role()
+    {
+        return $this->belongsTo(StaffRole::class, 'staff_role_id');
+    }
+}

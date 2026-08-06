@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GymXBook API Tester</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        h1 { color: #333; margin-bottom: 20px; }
+        .section { background: white; border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .section h2 { color: #ff6b2c; margin-bottom: 15px; font-size: 18px; border-bottom: 2px solid #ff6b2c; padding-bottom: 10px; }
+        .form-group { margin-bottom: 12px; }
+        label { display: block; margin-bottom: 5px; font-weight: 600; color: #555; font-size: 14px; }
+        input, textarea, select { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; }
+        input:focus, textarea:focus { outline: none; border-color: #ff6b2c; }
+        .btn { padding: 10px 20px; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 14px; margin: 5px 5px 5px 0; }
+        .btn-primary { background: #ff6b2c; color: white; }
+        .btn-primary:hover { background: #e55a1f; }
+        .btn-secondary { background: #6c757d; color: white; }
+        .btn-secondary:hover { background: #545b62; }
+        .btn-success { background: #28a745; color: white; }
+        .btn-danger { background: #dc3545; color: white; }
+        .result { background: #1e1e1e; color: #d4d4d4; padding: 15px; border-radius: 8px; margin-top: 15px; white-space: pre-wrap; font-family: 'Consolas', 'Monaco', monospace; font-size: 13px; max-height: 400px; overflow-y: auto; }
+        .row { display: flex; gap: 15px; }
+        .col { flex: 1; }
+        .token-display { background: #e8f5e9; padding: 10px; border-radius: 8px; margin-bottom: 15px; word-break: break-all; }
+        .token-display strong { color: #2e7d32; }
+        .status { padding: 5px 10px; border-radius: 4px; font-size: 12px; font-weight: 600; }
+        .status-ok { background: #e8f5e9; color: #2e7d32; }
+        .status-error { background: #ffebee; color: #c62828; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🏋️ GymXBook API Tester</h1>
+        
+        <!-- Token Section -->
+        <div class="section">
+            <h2>🔑 Authentication Token</h2>
+            <div class="token-display">
+                <strong>Current Token:</strong> <span id="currentToken">Not set</span>
+            </div>
+            <div class="form-group">
+                <label>Or paste token manually:</label>
+                <input type="text" id="manualToken" placeholder="Paste API token here">
+            </div>
+            <button class="btn btn-secondary" onclick="setManualToken()">Set Token</button>
+        </div>
+
+        <!-- Health Check -->
+        <div class="section">
+            <h2>❤️ Health Check</h2>
+            <button class="btn btn-primary" onclick="testHealth()">Test Health</button>
+            <div class="result" id="healthResult">Click to test...</div>
+        </div>
+
+        <!-- Auth Section -->
+        <div class="section">
+            <h2>🔐 Authentication</h2>
+            <div class="row">
+                <div class="col">
+                    <h3>Login</h3>
+                    <div class="form-group">
+                        <label>Email/Phone:</label>
+                        <input type="text" id="loginEmail" placeholder="Email or phone">
+                    </div>
+                    <div class="form-group">
+                        <label>Password:</label>
+                        <input type="password" id="loginPassword" placeholder="Password">
+                    </div>
+                    <button class="btn btn-primary" onclick="testLogin()">Login</button>
+                </div>
+                <div class="col">
+                    <h3>Send OTP</h3>
+                    <div class="form-group">
+                        <label>Phone:</label>
+                        <input type="text" id="otpPhone" placeholder="10 digits">
+                    </div>
+                    <button class="btn btn-primary" onclick="testSendOtp()">Send OTP</button>
+                    
+                    <h3 style="margin-top: 15px;">Verify OTP</h3>
+                    <div class="form-group">
+                        <label>OTP:</label>
+                        <input type="text" id="otpCode" placeholder="6 digits">
+                    </div>
+                    <button class="btn btn-primary" onclick="testVerifyOtp()">Verify OTP</button>
+                </div>
+            </div>
+            <div class="result" id="authResult">Results will appear here...</div>
+        </div>
+
+        <!-- Members Section -->
+        <div class="section">
+            <h2>👥 Members</h2>
+            <div class="row">
+                <div class="col">
+                    <h3>List Members</h3>
+                    <div class="form-group">
+                        <label>Search:</label>
+                        <input type="text" id="memberSearch" placeholder="Name, email, phone">
+                    </div>
+                    <div class="form-group">
+                        <label>Status:</label>
+                        <select id="memberStatus">
+                            <option value="">All</option>
+                            <option value="active">Active</option>
+                            <option value="expired">Expired</option>
+                            <option value="frozen">Frozen</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-primary" onclick="testListMembers()">List Members</button>
+                </div>
+                <div class="col">
+                    <h3>Create Member</h3>
+                    <div class="form-group">
+                        <label>Name:</label>
+                        <input type="text" id="memberName" placeholder="Full name">
+                    </div>
+                    <div class="form-group">
+                        <label>Email:</label>
+                        <input type="email" id="memberEmail" placeholder="Email">
+                    </div>
+                    <div class="form-group">
+                        <label>Phone:</label>
+                        <input type="text" id="memberPhone" placeholder="10 digits">
+                    </div>
+                    <div class="form-group">
+                        <label>Plan ID:</label>
+                        <input type="number" id="memberPlan" placeholder="1,2,3...">
+                    </div>
+                    <button class="btn btn-success" onclick="testCreateMember()">Create Member</button>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Member ID (for details):</label>
+                <input type="number" id="memberId" placeholder="Member ID">
+            </div>
+            <button class="btn btn-primary" onclick="testGetMember()">Get Member</button>
+            <div class="result" id="memberResult">Results will appear here...</div>
+        </div>
+
+        <!-- Attendance Section -->
+        <div class="section">
+            <h2>✅ Attendance</h2>
+            <div class="row">
+                <div class="col">
+                    <h3>List Attendance</h3>
+                    <div class="form-group">
+                        <label>Date:</label>
+                        <input type="date" id="attendanceDate">
+                    </div>
+                    <button class="btn btn-primary" onclick="testListAttendance()">List Attendance</button>
+                </div>
+                <div class="col">
+                    <h3>Check-In/Out</h3>
+                    <div class="form-group">
+                        <label>User ID:</label>
+                        <input type="number" id="attendanceUserId" placeholder="User ID">
+                    </div>
+                    <button class="btn btn-success" onclick="testCheckIn()">Check In</button>
+                    <button class="btn btn-danger" onclick="testCheckOut()">Check Out</button>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Search Members:</label>
+                <input type="text" id="attendanceSearch" placeholder="Search...">
+                <button class="btn btn-primary" onclick="testAttendanceSearch()" style="margin-top: 5px;">Search</button>
+            </div>
+            <button class="btn btn-primary" onclick="testAttendanceCalendar()">Calendar View</button>
+            <div class="result" id="attendanceResult">Results will appear here...</div>
+        </div>
+
+        <!-- Invoices Section -->
+        <div class="section">
+            <h2>📄 Invoices</h2>
+            <div class="row">
+                <div class="col">
+                    <h3>List Invoices</h3>
+                    <div class="form-group">
+                        <label>Status:</label>
+                        <select id="invoiceStatus">
+                            <option value="">All</option>
+                            <option value="paid">Paid</option>
+                            <option value="partial">Partial</option>
+                            <option value="unpaid">Unpaid</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-primary" onclick="testListInvoices()">List Invoices</button>
+                </div>
+                <div class="col">
+                    <h3>Get Invoice</h3>
+                    <div class="form-group">
+                        <label>Invoice ID:</label>
+                        <input type="number" id="invoiceId" placeholder="Invoice ID">
+                    </div>
+                    <button class="btn btn-primary" onclick="testGetInvoice()">Get Invoice</button>
+                </div>
+            </div>
+            <div class="result" id="invoiceResult">Results will appear here...</div>
+        </div>
+
+        <!-- Me Section -->
+        <div class="section">
+            <h2>👤 Current User</h2>
+            <button class="btn btn-primary" onclick="testMe()">Get My Info</button>
+            <button class="btn btn-danger" onclick="testLogout()">Logout</button>
+            <div class="result" id="meResult">Results will appear here...</div>
+        </div>
+    </div>
+
+    <script>
+        const BASE_URL = 'http://127.0.0.1:8000/api/v1';
+        let apiToken = localStorage.getItem('gymxbook_token') || '';
+
+        // Update token display
+        function updateTokenDisplay() {
+            document.getElementById('currentToken').textContent = apiToken || 'Not set';
+            if (apiToken) {
+                localStorage.setItem('gymxbook_token', apiToken);
+            }
+        }
+        updateTokenDisplay();
+
+        // Set manual token
+        function setManualToken() {
+            apiToken = document.getElementById('manualToken').value;
+            updateTokenDisplay();
+        }
+
+        // Generic fetch function
+        async function apiCall(method, endpoint, data = null) {
+            const headers = {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            };
+            
+            if (apiToken) {
+                headers['Authorization'] = `Bearer ${apiToken}`;
+            }
+
+            const options = { method, headers };
+            if (data && method !== 'GET') {
+                options.body = JSON.stringify(data);
+            }
+
+            try {
+                const response = await fetch(`${BASE_URL}${endpoint}`, options);
+                const result = await response.json();
+                return { status: response.status, data: result };
+            } catch (error) {
+                return { status: 0, data: { error: error.message } };
+            }
+        }
+
+        // Display result
+        function showResult(elementId, result) {
+            const el = document.getElementById(elementId);
+            el.textContent = JSON.stringify(result, null, 2);
+            el.className = 'result';
+        }
+
+        // ========== HEALTH ==========
+        async function testHealth() {
+            const result = await apiCall('GET', '/health');
+            showResult('healthResult', result);
+        }
+
+        // ========== AUTH ==========
+        async function testLogin() {
+            const email = document.getElementById('loginEmail').value;
+            const password = document.getElementById('loginPassword').value;
+            
+            const result = await apiCall('POST', '/login', { email, password });
+            showResult('authResult', result);
+            
+            if (result.data.api_token) {
+                apiToken = result.data.api_token;
+                updateTokenDisplay();
+            }
+        }
+
+        async function testSendOtp() {
+            const phone = document.getElementById('otpPhone').value;
+            const result = await apiCall('POST', '/send-otp', { phone });
+            showResult('authResult', result);
+        }
+
+        async function testVerifyOtp() {
+            const phone = document.getElementById('otpPhone').value;
+            const otp = document.getElementById('otpCode').value;
+            const result = await apiCall('POST', '/verify-otp', { phone, otp });
+            showResult('authResult', result);
+        }
+
+        // ========== MEMBERS ==========
+        async function testListMembers() {
+            const search = document.getElementById('memberSearch').value;
+            const status = document.getElementById('memberStatus').value;
+            let endpoint = '/members?';
+            if (search) endpoint += `search=${search}&`;
+            if (status) endpoint += `status=${status}&`;
+            
+            const result = await apiCall('GET', endpoint);
+            showResult('memberResult', result);
+        }
+
+        async function testCreateMember() {
+            const data = {
+                name: document.getElementById('memberName').value,
+                email: document.getElementById('memberEmail').value,
+                phone_number: document.getElementById('memberPhone').value,
+                membership_plan: parseInt(document.getElementById('memberPlan').value) || 1
+            };
+            
+            const result = await apiCall('POST', '/members', data);
+            showResult('memberResult', result);
+        }
+
+        async function testGetMember() {
+            const id = document.getElementById('memberId').value;
+            if (!id) { alert('Enter Member ID'); return; }
+            
+            const result = await apiCall('GET', `/members/${id}`);
+            showResult('memberResult', result);
+        }
+
+        // ========== ATTENDANCE ==========
+        async function testListAttendance() {
+            const date = document.getElementById('attendanceDate').value;
+            let endpoint = '/attendance';
+            if (date) endpoint += `?date=${date}`;
+            
+            const result = await apiCall('GET', endpoint);
+            showResult('attendanceResult', result);
+        }
+
+        async function testCheckIn() {
+            const userId = document.getElementById('attendanceUserId').value;
+            if (!userId) { alert('Enter User ID'); return; }
+            
+            const result = await apiCall('POST', '/attendance', { user_id: parseInt(userId), type: 'checkin' });
+            showResult('attendanceResult', result);
+        }
+
+        async function testCheckOut() {
+            const userId = document.getElementById('attendanceUserId').value;
+            if (!userId) { alert('Enter User ID'); return; }
+            
+            const result = await apiCall('POST', '/attendance', { user_id: parseInt(userId), type: 'checkout' });
+            showResult('attendanceResult', result);
+        }
+
+        async function testAttendanceSearch() {
+            const query = document.getElementById('attendanceSearch').value;
+            const result = await apiCall('GET', `/attendance/search?q=${query}`);
+            showResult('attendanceResult', result);
+        }
+
+        async function testAttendanceCalendar() {
+            const result = await apiCall('GET', '/attendance/calendar?month=7&year=2026');
+            showResult('attendanceResult', result);
+        }
+
+        // ========== INVOICES ==========
+        async function testListInvoices() {
+            const status = document.getElementById('invoiceStatus').value;
+            let endpoint = '/invoices';
+            if (status) endpoint += `?status=${status}`;
+            
+            const result = await apiCall('GET', endpoint);
+            showResult('invoiceResult', result);
+        }
+
+        async function testGetInvoice() {
+            const id = document.getElementById('invoiceId').value;
+            if (!id) { alert('Enter Invoice ID'); return; }
+            
+            const result = await apiCall('GET', `/invoices/${id}`);
+            showResult('invoiceResult', result);
+        }
+
+        // ========== ME ==========
+        async function testMe() {
+            const result = await apiCall('GET', '/me');
+            showResult('meResult', result);
+        }
+
+        async function testLogout() {
+            const result = await apiCall('POST', '/logout');
+            showResult('meResult', result);
+            
+            if (result.data.success) {
+                apiToken = '';
+                updateTokenDisplay();
+            }
+        }
+
+        // Set today's date as default
+        document.getElementById('attendanceDate').valueAsDate = new Date();
+    </script>
+</body>
+</html>

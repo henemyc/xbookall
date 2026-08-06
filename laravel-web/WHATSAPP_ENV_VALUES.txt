@@ -1,0 +1,41 @@
+# ==============================================
+# EXACT VALUES TO PUT IN .env (and .env.production)
+# ==============================================
+# These are taken directly from the working old config:
+#   gymxbook/lib/whatsapp_config.php
+#
+# Paste the block below into your Laravel .env file.
+# Then run:
+#   php artisan config:clear
+#   php artisan cache:clear   (if using cache)
+#
+# IMPORTANT:
+# - Use the full token (do not truncate)
+# - API_URL should be WITHOUT version
+# - After editing, test with:
+#   php artisan tinker
+#   >>> app(\App\Services\WhatsAppService::class)->sendOtp('9721068450', '123456', 1);
+#   >>> app(\App\Services\WhatsAppService::class)->sendMemberWelcome('9721068450', 'Test User', 'My Gym', '2026-12-31');
+
+# --- START COPY FROM HERE ---
+
+# WhatsApp Cloud API (Meta Graph API)
+WHATSAPP_API_URL=https://graph.facebook.com
+WHATSAPP_API_TOKEN=EAAZCH1TJGSm0BR2592sf4C6h6IYjPhyObr6ctDR7ADPUjE2af7DZAEhUDtzHoYVpWWNFHwNiRbdxzaLoRhCV1oTZAYKcsjjhPUMUR6xFQA5E11AzIPVb3vJk0kTQZB6UZCOFc1E6ASpqT7U956qkcWZCJBgf0dHXbf2IZCGEhaA1Q2102nMEyMENhzquJNPzaMD6I6FDgtg7hBdiCqnjMRmCamViZAGJ5E1R2Q3Gw8IKj9yzSD6hXrh00alih0QpdRPa2fWrhusonzfZBSBA9bgw4U6mCE680GqBEd74DZBQZDZD
+WHATSAPP_PHONE_NUMBER_ID=1151121884757409
+WHATSAPP_API_VERSION=v20.0
+
+# --- END COPY ---
+
+# Notes:
+# - The service builds the full URL as: WHATSAPP_API_URL + / + WHATSAPP_API_VERSION + / + PHONE_NUMBER_ID + /messages
+# - The old production flow used exactly these values.
+# - Make sure your Meta App has the correct phone number approved and the System User token has whatsapp_business_messaging permission.
+# - Templates (gymxbook_member_welcome, gymxbook_member_renew, gymxbook_member_expired, otp) must be approved in Meta Business Manager.
+
+# Optional: also set these in config/services.php if you prefer (but env takes precedence):
+# 'whatsapp' => [
+#     'api_url' => env('WHATSAPP_API_URL', 'https://graph.facebook.com'),
+#     'api_token' => env('WHATSAPP_API_TOKEN', ''),
+#     'phone_number_id' => env('WHATSAPP_PHONE_NUMBER_ID', ''),
+# ],
