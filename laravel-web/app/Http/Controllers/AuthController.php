@@ -11,6 +11,7 @@ use App\Models\SubscriptionTier;
 use App\Models\Category;
 use App\Models\Locker;
 use App\Services\WhatsAppService;
+use App\Services\PhoneIdentityService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Hash;
@@ -45,17 +46,12 @@ class AuthController extends BaseController
             return $this->error('Enter a valid 10-digit phone number', 400);
         }
 
+        // Strict account matching: compare the normalized last 10 digits, but
+        // never score/guess between migrated duplicate rows. Selecting another
+        // member just because a record has more data is a security violation.
         $candidates = User::where('is_active', true)
             ->whereIn('type', ['admin', 'owner', 'trainee', 'trainer', 'staff'])
-            ->where(function ($q) use ($loginDigits) {
-                $q->where('phone_number', $loginDigits)
-                  ->orWhere('phone_number', 'like', '%' . $loginDigits)
-                  ->orWhere('phone_number', 'like', '%91' . $loginDigits);
-            })
-            // Old migrated DBs can contain duplicate phone numbers across roles.
-            // Try owner/staff/trainer/member in priority order, but still choose
-            // the account whose password actually matches.
-            ->orderByRaw("FIELD(type, 'admin', 'owner', 'staff', 'trainer', 'trainee')")
+            ->whereRaw("RIGHT(REPLACE(REPLACE(REPLACE(phone_number, '+', ''), ' ', ''), '-', ''), 10) = ?", [$loginDigits])
             ->orderBy('id')
             ->get();
 
@@ -65,18 +61,21 @@ class AuthController extends BaseController
             if (!$valid && md5($password) === $candidate->password) {
                 $valid = true;
             }
-            if ($valid) {
-                $validCandidates->push($candidate);
-            }
+            if ($valid) $validCandidates->push($candidate);
         }
 
-        $user = $validCandidates
-            ->sortByDesc(fn($candidate) => $this->loginCandidateScore($candidate))
-            ->first();
-
-        if (!$user) {
+        if ($validCandidates->isEmpty()) {
             return $this->error('Invalid phone or password', 401);
         }
+        if ($validCandidates->count() > 1) {
+            \Log::critical('Ambiguous login blocked: duplicate normalized phone and password match', [
+                'phone_last4' => substr($loginDigits, -4),
+                'user_ids' => $validCandidates->pluck('id')->all(),
+            ]);
+            return $this->error('Multiple accounts match this phone number. Please contact support.', 409);
+        }
+
+        $user = $validCandidates->first();
 
         if ($user->type === 'trainer' && !\App\Services\SubscriptionFeatureService::enabled((int) ($user->parent_id ?: 0), 'trainers_enabled', true)) {
             return $this->error(\App\Services\SubscriptionFeatureService::featureLockedMessage('Trainer app login'), 402);
@@ -189,14 +188,21 @@ class AuthController extends BaseController
         $email = trim($request->input('email', ''));
         $phone = trim($request->input('phone_number', ''));
         $password = $request->input('password', '');
+        $source = trim($request->input('acquisition_source', ''));
+        $sourceDetail = trim($request->input('acquisition_detail', ''));
+        $address = trim($request->input('address', ''));
+        $city = trim($request->input('city', ''));
 
         if (!$businessName) return $this->error('Business name is required', 400);
         if (!$personalName) return $this->error('Your name is required', 400);
-        if (!$email) return $this->error('Email is required', 400);
         if (!$password || strlen($password) < 6) return $this->error('Password must be at least 6 characters', 400);
+        if (!in_array($source, ['google_search', 'play_store', 'social_media', 'youtube', 'chatgpt_ai', 'referral', 'sales_team', 'other'], true)) {
+            return $this->error('Please select how you discovered GymXBook', 400);
+        }
 
-        // === DUPLICATE CHECKS (before OTP requirement) ===
-        if (User::where('email', $email)->exists()) {
+        // Email is optional because the production account identity is phone.
+        // A private placeholder keeps the users.email unique constraint intact.
+        if ($email !== '' && User::where('email', $email)->exists()) {
             return $this->error('An account with this email already exists', 400);
         }
 
@@ -208,13 +214,14 @@ class AuthController extends BaseController
         if (strlen($phoneDigits) != 10 || !preg_match('/^[6-9][0-9]{9}$/', $phoneDigits)) {
             return $this->error('Phone must be exactly 10 digits, starting with 6-9', 400);
         }
+        if ($email === '') {
+            $email = 'gym_' . $phoneDigits . '@gymxbook.temp';
+        }
 
-        // Phone duplicate check — match 10 digit, last 10 digit, or 91-prefixed numbers.
-        if (User::where('phone_number', $phoneDigits)
-            ->orWhere('phone_number', 'like', '%' . $phoneDigits)
-            ->orWhere('phone_number', 'like', '%91' . $phoneDigits)
-            ->exists()) {
-            return $this->error('A user with this phone number is already registered. Please login instead.', 400);
+        // Option 1 policy: this phone can belong to only one account globally.
+        $phoneIdentity = app(PhoneIdentityService::class);
+        if (!$phoneIdentity->isAvailable($phoneDigits)) {
+            return $this->error(PhoneIdentityService::DUPLICATE_MESSAGE, 400);
         }
 
         // Verify OTP (required for registration)
@@ -242,27 +249,21 @@ class AuthController extends BaseController
                 'parent_id' => 1,
                 'is_active' => true,
                 'email_verification_token' => $verifyToken,
+                'acquisition_source' => $source,
+                'acquisition_detail' => $sourceDetail !== '' ? $sourceDetail : null,
             ]);
 
             // Save business name (using the new user's id for settings)
             Setting::setValue('company_name', $businessName, $user->id);
             if ($phoneDigits) Setting::setValue('company_phone', $phoneDigits, $user->id);
-            if ($email) Setting::setValue('company_email', $email, $user->id);
+            if (!str_ends_with($email, '@gymxbook.temp')) Setting::setValue('company_email', $email, $user->id);
+            if ($address !== '' || $city !== '') Setting::setValue('company_address', trim($address . ($address !== '' && $city !== '' ? ', ' : '') . $city), $user->id);
 
             // All default gym data must use the new gym owner id, not Super Admin id 1.
             $gymParentId = (int) $user->id;
 
-            // Create default plans
-            $plans = [
-                ['title' => 'Monthly Basic', 'package' => 'monthly', 'amount' => 999],
-                ['title' => 'Quarterly', 'package' => 'quarterly', 'amount' => 2499],
-                ['title' => 'Half-Yearly', 'package' => 'half-yearly', 'amount' => 4499],
-                ['title' => 'Yearly Premium', 'package' => 'yearly', 'amount' => 8999],
-            ];
-
-            foreach ($plans as $plan) {
-                Membership::create(array_merge($plan, ['parent_id' => $gymParentId]));
-            }
+            // Do not seed membership plans. Every new gym starts with an
+            // empty Plans module and creates plans according to its own pricing.
 
             // Create default categories
             foreach (['General', 'VIP'] as $cat) {
@@ -296,16 +297,9 @@ class AuthController extends BaseController
 
             DB::commit();
 
-            // === SEND WELCOME WHATSAPP (non-blocking) ===
-            try {
-                $whatsapp = new WhatsAppService();
-                if ($whatsapp->isConfigured()) {
-                    $expiry = $user->subscription_expire_date ? $user->subscription_expire_date->format('d-m-Y') : now()->addDays(7)->format('d-m-Y');
-                    $whatsapp->sendMemberWelcome($phoneDigits, $personalName, $businessName, $expiry, $user->id);
-                }
-            } catch (\Exception $e) {
-                \Log::info('Welcome WhatsApp failed (non-blocking): ' . $e->getMessage());
-            }
+            // Gym registration intentionally does not send the member welcome
+            // WhatsApp template. Member welcome messages are sent only when a
+            // Gym Owner creates a trainee/member account.
 
             $this->ensureSanctumTokenTable();
             $token = $user->createToken('gymxbook-app')->plainTextToken;
@@ -466,13 +460,128 @@ class AuthController extends BaseController
             return $this->error('Email already in use', 400);
         }
 
+        $digits = $this->validatePhone($phone);
+        if (is_string($digits)) {
+            return $this->error($digits, 400);
+        }
+        $digits = (string) $digits;
+        $currentDigits = preg_replace('/[^0-9]/', '', (string) $user->phone_number);
+        if (strlen($currentDigits) === 12 && str_starts_with($currentDigits, '91')) {
+            $currentDigits = substr($currentDigits, 2);
+        }
+
+        // A changed login phone is security-sensitive. It must be a unique
+        // number and have a recent WhatsApp OTP verification before saving.
+        if ($digits !== $currentDigits) {
+            $phoneIdentity = app(PhoneIdentityService::class);
+            if (!$phoneIdentity->isAvailable($digits, (int) $user->id)) {
+                return $this->error(PhoneIdentityService::DUPLICATE_MESSAGE, 400);
+            }
+
+            $verified = OtpVerification::where('identifier', $digits)
+                ->where('verified', true)
+                ->where('created_at', '>', now()->subMinutes(10))
+                ->exists();
+            if (!$verified) {
+                return $this->error('Verify the new phone number with OTP before updating your profile.', 400);
+            }
+        }
+
         $user->update([
             'name' => $name,
             'email' => $email,
-            'phone_number' => $phone,
+            'phone_number' => $digits,
         ]);
 
         return $this->success([], 'Profile updated successfully');
+    }
+
+    /**
+     * Send a WhatsApp OTP to an existing, unambiguous account for passwordless login.
+     */
+    public function sendLoginOtp(Request $request): JsonResponse
+    {
+        $digits = $this->validatePhone(trim((string) $request->input('phone', '')));
+        if (is_string($digits)) return $this->error($digits, 400);
+        $digits = (string) $digits;
+
+        $users = User::where('is_active', true)
+            ->whereIn('type', ['admin', 'owner', 'trainee', 'trainer', 'staff'])
+            ->whereRaw("RIGHT(REPLACE(REPLACE(REPLACE(phone_number, '+', ''), ' ', ''), '-', ''), 10) = ?", [$digits])
+            ->get();
+        if ($users->count() !== 1) {
+            return $this->error('Unable to send login OTP. Please use password login or contact support.', 400);
+        }
+
+        $recent = OtpVerification::where('identifier', $digits)->where('channel', 'login')->where('created_at', '>', now()->subMinutes(15))->count();
+        if ($recent >= 3) return $this->error('Too many OTP requests. Please wait 15 minutes.', 429);
+
+        $otp = str_pad((string) random_int(100000, 999999), 6, '0', STR_PAD_LEFT);
+        OtpVerification::where('identifier', $digits)->where('channel', 'login')->where('verified', false)->delete();
+        OtpVerification::create([
+            'identifier' => $digits,
+            'otp_hash' => Hash::make($otp),
+            'otp_plain' => $otp,
+            'channel' => 'login',
+            'expires_at' => now()->addMinutes(10),
+            'verified' => false,
+            'attempts' => 0,
+        ]);
+
+        try {
+            $user = $users->first();
+            $whatsapp = new WhatsAppService();
+            $result = $whatsapp->sendOtp($digits, $otp, $user->gymId());
+            if (empty($result['success'])) {
+                OtpVerification::where('identifier', $digits)->where('channel', 'login')->where('otp_plain', $otp)->delete();
+                return $this->error('Failed to send WhatsApp OTP', 400);
+            }
+        } catch (\Throwable $e) {
+            OtpVerification::where('identifier', $digits)->where('channel', 'login')->where('otp_plain', $otp)->delete();
+            \Log::warning('Login OTP send failed', ['error' => $e->getMessage()]);
+            return $this->error('Failed to send WhatsApp OTP', 500);
+        }
+
+        return $this->success(['expires_in' => 600], 'OTP sent to WhatsApp');
+    }
+
+    /** Verify a login-only OTP and issue a normal Sanctum app token. */
+    public function verifyLoginOtp(Request $request): JsonResponse
+    {
+        $digits = $this->validatePhone(trim((string) $request->input('phone', '')));
+        $otp = trim((string) $request->input('otp', ''));
+        if (is_string($digits)) return $this->error($digits, 400);
+        $digits = (string) $digits;
+        if (!preg_match('/^[0-9]{6}$/', $otp)) return $this->error('OTP must be 6 digits', 400);
+
+        $record = OtpVerification::where('identifier', $digits)->where('channel', 'login')->where('expires_at', '>', now())->latest()->first();
+        if (!$record || $record->verified) return $this->error('OTP expired or not found. Please request a new OTP.', 400);
+        if ($record->attempts >= 5) { $record->delete(); return $this->error('Too many wrong attempts. Request a new OTP.', 400); }
+
+        $valid = Hash::check($otp, $record->otp_hash) || $record->otp_plain === $otp;
+        if (!$valid) { $record->increment('attempts'); return $this->error('Invalid OTP. Please try again.', 400); }
+
+        $users = User::where('is_active', true)
+            ->whereIn('type', ['admin', 'owner', 'trainee', 'trainer', 'staff'])
+            ->whereRaw("RIGHT(REPLACE(REPLACE(REPLACE(phone_number, '+', ''), ' ', ''), '-', ''), 10) = ?", [$digits])
+            ->get();
+        if ($users->count() !== 1) return $this->error('Unable to verify this account. Please contact support.', 409);
+
+        $user = $users->first();
+        $record->update(['verified' => true, 'attempts' => $record->attempts + 1]);
+        $this->ensureSanctumTokenTable();
+        $this->markLoggedIn($request, $user);
+        $token = $user->createToken('gymxbook-app')->plainTextToken;
+        $userData = $user->toArray();
+        unset($userData['password'], $userData['remember_token'], $userData['twofa_secret']);
+
+        return $this->success([
+            'token' => $token,
+            'api_token' => $token,
+            'access_token' => $token,
+            'user' => $userData,
+            'user_type' => $user->type,
+        ], 'Login successful');
     }
 
     /**
@@ -524,11 +633,8 @@ class AuthController extends BaseController
         }
         $digits = (string) $digits;
 
-        // Smooth onboarding: stop here before sending OTP if phone already has an account.
-        if (User::where('phone_number', $digits)
-            ->orWhere('phone_number', 'like', '%' . $digits)
-            ->orWhere('phone_number', 'like', '%91' . $digits)
-            ->exists()) {
+        // Registration phone must be globally unused across every role/gym.
+        if (!app(PhoneIdentityService::class)->isAvailable($digits)) {
             return $this->error('This phone number is already registered. Please login instead.', 400);
         }
 
@@ -651,26 +757,26 @@ class AuthController extends BaseController
         $digits = $this->validatePhone($phone);
         if (is_string($digits)) return $this->error($digits, 400);
 
-        // Match PWA/api.php: find by last 10 digits, exact 10 digits, or 91-prefixed number.
-        $user = User::where('phone_number', 'like', '%' . $digits)->where('is_active', true)->first();
-        if (!$user) {
-            $user = User::where('phone_number', $digits)->where('is_active', true)->first();
-        }
-        if (!$user) {
-            $user = User::where('phone_number', 'like', '%91' . $digits)->where('is_active', true)->first();
-        }
-        if (!$user) {
+        $matches = app(PhoneIdentityService::class)
+            ->matchingUsers((string) $digits)
+            ->where('is_active', true)
+            ->get();
+        if ($matches->isEmpty()) {
             return $this->error('Phone number not found. No account associated with this number.', 404);
         }
+        if ($matches->count() > 1) {
+            return $this->error('Multiple accounts match this phone number. Please contact support.', 409);
+        }
+        $user = $matches->first();
 
-        $recentCount = OtpVerification::where('identifier', $digits)->where('created_at', '>', now()->subMinutes(15))->count();
+        $recentCount = OtpVerification::where('identifier', $digits)->where('channel', 'forgot_password')->where('created_at', '>', now()->subMinutes(15))->count();
         if ($recentCount >= 3) return $this->error('Too many OTP requests. Please wait 15 minutes.', 429);
 
         $otp = str_pad(random_int(100000, 999999), 6, '0', STR_PAD_LEFT);
-        OtpVerification::where('identifier', $digits)->where('verified', false)->delete();
+        OtpVerification::where('identifier', $digits)->where('channel', 'forgot_password')->where('verified', false)->delete();
         OtpVerification::create([
             'identifier' => $digits, 'otp_hash' => Hash::make($otp), 'otp_plain' => $otp,
-            'channel' => 'whatsapp', 'expires_at' => now()->addMinutes(10), 'verified' => false, 'attempts' => 0,
+            'channel' => 'forgot_password', 'expires_at' => now()->addMinutes(10), 'verified' => false, 'attempts' => 0,
         ]);
 
         // Send via WhatsApp exactly like the working PWA/api.php flow.
@@ -713,7 +819,7 @@ class AuthController extends BaseController
         if (is_string($digits)) return $this->error($digits, 400);
         if (!preg_match('/^[0-9]{6}$/', $otp)) return $this->error('OTP must be 6 digits', 400);
 
-        $otpRecord = OtpVerification::where('identifier', $digits)->where('expires_at', '>', now())->orderBy('verified', 'desc')->orderBy('created_at', 'desc')->first();
+        $otpRecord = OtpVerification::where('identifier', $digits)->where('channel', 'forgot_password')->where('expires_at', '>', now())->orderBy('verified', 'desc')->orderBy('created_at', 'desc')->first();
         if (!$otpRecord) return $this->error('OTP expired or not found', 400);
         if ($otpRecord->verified) return $this->success(['message' => 'Already verified', 'phone' => $digits]);
         if ($otpRecord->attempts >= 5) { $otpRecord->delete(); return $this->error('Too many attempts', 400); }
@@ -746,15 +852,19 @@ class AuthController extends BaseController
         if (strlen($newPassword) < 6) return $this->error('Password must be at least 6 characters', 400);
         if ($newPassword !== $confirmPassword) return $this->error('Passwords do not match', 400);
 
-        $otpRecord = OtpVerification::where('identifier', $digits)->where('verified', true)->where('created_at', '>', now()->subMinutes(10))->first();
+        $otpRecord = OtpVerification::where('identifier', $digits)->where('channel', 'forgot_password')->where('verified', true)->where('created_at', '>', now()->subMinutes(10))->first();
         if (!$otpRecord) {
-            $otpRecord = OtpVerification::where('identifier', $digits)->where('otp_plain', $otp)->where('expires_at', '>', now())->first();
+            $otpRecord = OtpVerification::where('identifier', $digits)->where('channel', 'forgot_password')->where('otp_plain', $otp)->where('expires_at', '>', now())->first();
             if (!$otpRecord) return $this->error('OTP not verified or expired.', 400);
         }
 
-        $user = User::where('phone_number', 'like', '%' . $digits)->where('is_active', true)->first();
-        if (!$user) $user = User::where('phone_number', $digits)->where('is_active', true)->first();
-        if (!$user) return $this->error('Phone number not found', 404);
+        $matches = app(PhoneIdentityService::class)
+            ->matchingUsers((string) $digits)
+            ->where('is_active', true)
+            ->get();
+        if ($matches->isEmpty()) return $this->error('Phone number not found', 404);
+        if ($matches->count() > 1) return $this->error('Multiple accounts match this phone number. Please contact support.', 409);
+        $user = $matches->first();
 
         $user->update(['password' => Hash::make($newPassword)]);
         OtpVerification::where('identifier', $digits)->delete();

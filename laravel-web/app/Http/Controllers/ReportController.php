@@ -156,7 +156,17 @@ class ReportController extends BaseController
                 ];
             });
 
+        // Due amount is calculated from this gym's invoices only. Paid invoices
+        // contribute zero; partial/unpaid invoices contribute their remaining balance.
+        $dueAmount = Invoice::whereIn('parent_id', $parentIds)
+            ->with(['items', 'payments'])
+            ->get()
+            ->sum(function ($invoice) {
+                return max(0, (float) $invoice->items->sum('amount') - (float) $invoice->payments->sum('amount'));
+            });
+
         return $this->success([
+            'due_amount' => $dueAmount,
             'new_members' => $newMembers,
             'new_members_count' => $newMembers->count(),
             'expiring_7days' => $expiring7Days,
@@ -177,6 +187,10 @@ class ReportController extends BaseController
      */
     public function transactions(Request $request): JsonResponse
     {
+        if (!$this->canPerformGymAction('transactions.view')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $parentIds = $this->getGymParentIds();
         $month = (int) $request->get('month', now()->month);
         $year = (int) $request->get('year', now()->year);
@@ -269,6 +283,10 @@ class ReportController extends BaseController
      */
     public function memberTransactions(Request $request): JsonResponse
     {
+        if (!$this->canPerformGymAction('transactions.view')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $parentIds = $this->getGymParentIds();
         $userId = (int) $request->get('user_id');
 

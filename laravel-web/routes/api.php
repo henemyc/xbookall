@@ -19,11 +19,15 @@ use App\Http\Controllers\LockerController;
 use App\Http\Controllers\EventController;
 use App\Http\Controllers\WorkoutController;
 use App\Http\Controllers\HealthRecordController;
+use App\Http\Controllers\DietController;
 use App\Http\Controllers\SubscriptionController;
 use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\Admin\BugReportController;
 use App\Http\Controllers\WebLoginController;
+use App\Http\Controllers\ProfilePhotoController;
+use App\Http\Controllers\DeviceTokenController;
+use App\Http\Controllers\NotificationPreferenceController;
 
 /*
 |--------------------------------------------------------------------------
@@ -42,6 +46,8 @@ Route::get('/v1/health', [HealthController::class, 'check']);
 // Auth routes - no auth required
 Route::prefix('v1')->group(function () {
     Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:5,1');
+    Route::post('/login/send-otp', [AuthController::class, 'sendLoginOtp'])->middleware('throttle:3,15');
+    Route::post('/login/verify-otp', [AuthController::class, 'verifyLoginOtp'])->middleware('throttle:5,15');
     Route::post('/register', [AuthController::class, 'register']);
     Route::post('/send-otp', [AuthController::class, 'sendOtp']);
     Route::post('/verify-otp', [AuthController::class, 'verifyOtp']);
@@ -66,7 +72,17 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
     Route::get('/me', [AuthController::class, 'me']);
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::post('/track-app-open', [AuthController::class, 'trackAppOpen']);
+    Route::post('/device-tokens', [DeviceTokenController::class, 'register']);
+    Route::delete('/device-tokens', [DeviceTokenController::class, 'unregister']);
+    Route::get('/notification-preferences', [NotificationPreferenceController::class, 'show']);
+    Route::put('/notification-preferences', [NotificationPreferenceController::class, 'update']);
     Route::put('/update-profile', [AuthController::class, 'updateProfile']);
+    // Profile photos: every authenticated user can edit their own image;
+    // gym admins/staff with members.edit can manage their gym members.
+    Route::post('/profile/photo', [ProfilePhotoController::class, 'uploadMine']);
+    Route::delete('/profile/photo', [ProfilePhotoController::class, 'removeMine']);
+    Route::post('/members/{id}/photo', [ProfilePhotoController::class, 'uploadMember']);
+    Route::delete('/members/{id}/photo', [ProfilePhotoController::class, 'removeMember']);
     Route::post('/change-password', [AuthController::class, 'changePassword']);
     
     // Dashboard & Reports
@@ -188,6 +204,18 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
     Route::post('/health-records', [HealthRecordController::class, 'store']);
     Route::put('/health-records/{id}', [HealthRecordController::class, 'update']);
     Route::delete('/health-records/{id}', [HealthRecordController::class, 'destroy']);
+
+    // Diet management: templates remain reusable; member diets are copied and
+    // can be customized without changing their source template.
+    Route::get('/diet-templates', [DietController::class, 'templates']);
+    Route::post('/diet-templates', [DietController::class, 'storeTemplate']);
+    Route::put('/diet-templates/{id}', [DietController::class, 'updateTemplate']);
+    Route::delete('/diet-templates/{id}', [DietController::class, 'destroyTemplate']);
+    Route::get('/members/{id}/diets', [DietController::class, 'memberDiets']);
+    Route::post('/members/{id}/diets', [DietController::class, 'assign']);
+    Route::put('/member-diets/{id}', [DietController::class, 'updateMemberDiet']);
+    Route::delete('/member-diets/{id}', [DietController::class, 'destroyMemberDiet']);
+    Route::get('/my-diet', [DietController::class, 'myDiet']);
     
     // Subscription
     Route::get('/subscription/plans', [SubscriptionController::class, 'plans']);

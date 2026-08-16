@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:gymxbook/core/widgets/ui.dart';
 import 'package:gymxbook/core/api/api_client.dart';
 import 'package:gymxbook/features/auth/providers/auth_provider.dart';
+import 'package:gymxbook/core/providers/permission_provider.dart';
 
 class ProductsScreen extends ConsumerStatefulWidget {
   const ProductsScreen({super.key});
@@ -28,11 +29,15 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final permissions = ref.watch(permissionProvider);
+    final canCreate = permissions.can('products.create');
+    final canEdit = permissions.can('products.edit');
+    final canDelete = permissions.can('products.delete');
     return Scaffold(
       body: loading
           ? const SkeletonList()
           : products.isEmpty
-              ? EmptyState(icon: Icons.storefront_rounded, title: 'No products yet', subtitle: 'Add supplements, gear, and more', actionLabel: 'Add Product', onAction: _showAdd)
+              ? EmptyState(icon: Icons.storefront_rounded, title: 'No products yet', subtitle: canCreate ? 'Add supplements, gear, and more' : 'No products available for your role', actionLabel: canCreate ? 'Add Product' : null, onAction: canCreate ? _showAdd : null)
               : RefreshIndicator(
                   color: AppTheme.brand,
                   onRefresh: _load,
@@ -44,7 +49,7 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
                       final p = products[i];
                       return FadeInUp(delayMs: (i * 20).clamp(0, 240), offset: 10, child: SurfaceCard(
                         padding: const EdgeInsets.all(12),
-                        onTap: () => _showEdit(Map<String, dynamic>.from(p)),
+                        onTap: canEdit ? () => _showEdit(Map<String, dynamic>.from(p)) : null,
                         child: Row(children: [
                           IconBadge(Icons.storefront_rounded, color: AppTheme.warning, size: 46, iconSize: 22),
                           const SizedBox(width: 12),
@@ -56,21 +61,25 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
                             Text('₹${p['price']}', style: GoogleFonts.spaceGrotesk(fontSize: 16, fontWeight: FontWeight.w700, color: context.tokens.text)),
                             if (p['discount'] != null) Text('${p['discount']}% off', style: context.typo.labelSmall?.copyWith(color: AppTheme.success)),
                           ]),
-                          PopupMenuButton<String>(
-                            icon: Icon(Icons.more_vert_rounded, size: 20, color: context.tokens.textTertiary),
-                            onSelected: (v) { if (v == 'edit') _showEdit(Map<String, dynamic>.from(p)); if (v == 'delete') _deleteProduct(p); },
-                            itemBuilder: (_) => const [
-                              PopupMenuItem(value: 'edit', child: Text('Edit')),
-                              PopupMenuItem(value: 'delete', child: Text('Delete', style: TextStyle(color: AppTheme.danger))),
-                            ],
-                          ),
+                          if (canEdit || canDelete)
+                            PopupMenuButton<String>(
+                              icon: Icon(Icons.more_vert_rounded, size: 20, color: context.tokens.textTertiary),
+                              onSelected: (v) {
+                                if (v == 'edit' && canEdit) _showEdit(Map<String, dynamic>.from(p));
+                                if (v == 'delete' && canDelete) _deleteProduct(p);
+                              },
+                              itemBuilder: (_) => [
+                                if (canEdit) const PopupMenuItem(value: 'edit', child: Text('Edit')),
+                                if (canDelete) const PopupMenuItem(value: 'delete', child: Text('Delete', style: TextStyle(color: AppTheme.danger))),
+                              ],
+                            ),
                         ]),
                       ));
                     },
                   ),
                 ),
       floatingActionButtonLocation: const AboveNavFabLocation(),
-      floatingActionButton: FloatingActionButton.extended(onPressed: _showAdd, icon: const Icon(Icons.add_rounded), label: const Text('Add Product', style: TextStyle(fontWeight: FontWeight.w700)), backgroundColor: AppTheme.brand),
+      floatingActionButton: canCreate ? FloatingActionButton.extended(onPressed: _showAdd, icon: const Icon(Icons.add_rounded), label: const Text('Add Product', style: TextStyle(fontWeight: FontWeight.w700)), backgroundColor: AppTheme.brand) : null,
     );
   }
 
@@ -117,9 +126,17 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
             }
             if (mounted) Navigator.pop(context); _load();
             if (mounted) Toast.success(context, editing ? 'Product updated' : 'Product added');
-          } catch (_) { Toast.error(context, 'Failed'); }
+          } catch (e) { Toast.error(context, _productError(e)); }
         }),
       ]),
     ));
+  }
+
+  String _productError(Object error) {
+    try {
+      final data = (error as dynamic).response?.data;
+      if (data is Map) return (data['error'] ?? data['message'] ?? 'Could not save product').toString();
+    } catch (_) {}
+    return 'Could not save product. Please try again.';
   }
 }

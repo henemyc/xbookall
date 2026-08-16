@@ -17,6 +17,9 @@
             </form>
         </div>
         <div class="col-md-6 text-end">
+            <button type="button" class="btn btn-primary me-2" data-bs-toggle="modal" data-bs-target="#createGymModal">
+                <i class="bi bi-plus-lg"></i> Create Gym
+            </button>
             <div class="btn-group">
                 <a href="{{ route('admin.gyms.index') }}" class="btn btn-outline-secondary {{ $status === '' ? 'active' : '' }}">All</a>
                 <a href="{{ route('admin.gyms.index', ['status' => 'active']) }}" class="btn btn-outline-success {{ $status === 'active' ? 'active' : '' }}">Active</a>
@@ -128,4 +131,60 @@
         {{ $gyms->links() }}
     </div>
 </div>
+
+<div class="modal fade" id="createGymModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <form class="modal-content" id="createGymForm">
+            @csrf
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-building-add me-2"></i>Create Gym Account</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-light border small">Creates a Gym Owner account directly. WhatsApp OTP verification is intentionally not required for Super Admin creation.</div>
+                <div class="row g-3">
+                    <div class="col-md-6"><label class="form-label">Gym Name *</label><input class="form-control" name="business_name" required></div>
+                    <div class="col-md-6"><label class="form-label">Owner Name *</label><input class="form-control" name="owner_name" required></div>
+                    <div class="col-md-6"><label class="form-label">Phone *</label><input class="form-control" name="phone_number" inputmode="numeric" required></div>
+                    <div class="col-md-6"><label class="form-label">Email (optional)</label><input class="form-control" type="email" name="email"></div>
+                    <div class="col-md-6"><label class="form-label">Password *</label><input class="form-control" type="password" name="password" minlength="6" required></div>
+                    <div class="col-md-6"><label class="form-label">Source</label><select class="form-select" name="acquisition_source"><option value="super_admin">Super Admin</option><option value="google_search">Google Search</option><option value="play_store">Google Play Store</option><option value="social_media">Instagram / Facebook</option><option value="referral">Referral</option><option value="other">Other</option></select></div>
+                    <div class="col-12"><label class="form-label">Address</label><textarea class="form-control" name="address" rows="2"></textarea></div>
+                    <div class="col-12"><label class="form-label">Source detail / referral (optional)</label><input class="form-control" name="acquisition_detail"></div>
+                </div>
+                <div class="text-danger small mt-3 d-none" id="createGymError"></div>
+            </div>
+            <div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button><button class="btn btn-primary" id="createGymSubmit" type="submit">Create Gym</button></div>
+        </form>
+    </div>
+</div>
+
+@push('scripts')
+<script>
+document.getElementById('createGymForm').addEventListener('submit', async function (event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const error = document.getElementById('createGymError');
+    const button = document.getElementById('createGymSubmit');
+    error.classList.add('d-none');
+    button.disabled = true;
+    button.textContent = 'Creating...';
+    try {
+        const response = await fetch('{{ route('admin.gyms.store') }}', {
+            method: 'POST',
+            headers: { 'X-CSRF-TOKEN': form.querySelector('[name=_token]').value, 'Accept': 'application/json' },
+            body: new FormData(form)
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || 'Could not create gym account');
+        window.location.href = data.redirect;
+    } catch (e) {
+        error.textContent = e.message;
+        error.classList.remove('d-none');
+        button.disabled = false;
+        button.textContent = 'Create Gym';
+    }
+});
+</script>
+@endpush
 @endsection

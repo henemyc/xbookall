@@ -64,14 +64,8 @@ class _AdminQRScreenState extends ConsumerState<AdminQRScreen> {
                   padding: const EdgeInsets.fromLTRB(20, 12, 20, 40),
                   child: Column(children: [
                     FadeInUp(child: _qrCard()),
-                    const SizedBox(height: 26),
-                    FadeInUp(delayMs: 80, child: Row(children: [
-                      Expanded(child: FireButton(label: 'Refresh QR', icon: Icons.refresh_rounded, onPressed: _load)),
-                    ])),
-                    const SizedBox(height: 10),
-                    FadeInUp(delayMs: 120, child: SizedBox(width: double.infinity, child: OutlinedButton.icon(onPressed: () => Toast.info(context, 'Print poster coming soon'), icon: const Icon(Icons.print_rounded), label: const Text('Print QR Poster')))),
                     const SizedBox(height: 22),
-                    FadeInUp(delayMs: 160, child: SurfaceCard(
+                    FadeInUp(delayMs: 80, child: SurfaceCard(
                       color: AppTheme.info.withOpacity(0.08),
                       border: Border.all(color: AppTheme.info.withOpacity(0.2)),
                       child: Row(children: [

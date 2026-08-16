@@ -29,13 +29,16 @@ Route::middleware(['auth', 'admin'])->group(function () {
     
     // Gyms
     Route::get('/gyms', [GymController::class, 'index'])->name('admin.gyms.index');
+    Route::post('/gyms', [GymController::class, 'store'])->name('admin.gyms.store');
     Route::get('/gyms/{id}', [GymController::class, 'show'])->name('admin.gyms.show');
     Route::put('/gyms/{id}', [GymController::class, 'update'])->name('admin.gyms.update');
     Route::post('/gyms/{id}/toggle', [GymController::class, 'toggle'])->name('admin.gyms.toggle');
+    Route::post('/gyms/{id}/delete-otp', [GymController::class, 'sendDeleteOtp'])->name('admin.gyms.deleteOtp');
     Route::delete('/gyms/{id}', [GymController::class, 'destroy'])->name('admin.gyms.destroy');
     
     // FIX #1: Update subscription
     Route::post('/gyms/{id}/subscription', [GymController::class, 'updateSubscription'])->name('admin.gyms.updateSubscription');
+    Route::post('/gyms/{id}/acquisition', [GymController::class, 'updateAcquisition'])->name('admin.gyms.updateAcquisition');
     
     // FIX #2: Login as gym owner
     Route::post('/gyms/{id}/login-as', [GymController::class, 'loginAs'])->name('admin.gyms.loginAs');
@@ -85,15 +88,23 @@ Route::middleware(['auth', 'admin'])->group(function () {
     Route::post('/settings/platform', [AdminSettingsController::class, 'updatePlatform'])->name('admin.settings.platform');
     Route::post('/settings/maintenance', [AdminSettingsController::class, 'updateMaintenance'])->name('admin.settings.maintenance');
     Route::post('/settings/security', [AdminSettingsController::class, 'updateSecurity'])->name('admin.settings.security');
+    Route::post('/settings/operation-mode', [AdminSettingsController::class, 'updateOperationMode'])->name('admin.settings.operation-mode');
+    Route::post('/settings/profile', [AdminSettingsController::class, 'updateProfile'])->name('admin.settings.profile');
+    Route::post('/settings/password', [AdminSettingsController::class, 'updatePassword'])->name('admin.settings.password');
+    Route::post('/settings/google-auth/setup', [AdminSettingsController::class, 'setupGoogleAuthenticator'])->name('admin.settings.google-auth.setup');
+    Route::post('/settings/google-auth/confirm', [AdminSettingsController::class, 'confirmGoogleAuthenticator'])->name('admin.settings.google-auth.confirm');
+    Route::post('/settings/google-auth/disable', [AdminSettingsController::class, 'disableGoogleAuthenticator'])->name('admin.settings.google-auth.disable');
 
     // SUPERADMIN: Test WhatsApp API
     Route::post('/settings/whatsapp/test', [AdminSettingsController::class, 'testWhatsApp'])->name('admin.settings.whatsapp.test');
     Route::post('/settings/whatsapp/test-connection', [AdminSettingsController::class, 'testWhatsAppConnection'])->name('admin.settings.whatsapp.test-connection');
     Route::post('/settings/whatsapp/diagnose', [AdminSettingsController::class, 'diagnoseWhatsApp'])->name('admin.settings.whatsapp.diagnose');
+    Route::post('/settings/fcm/test', [AdminSettingsController::class, 'testFcm'])->name('admin.settings.fcm.test');
     
     // Bug Reports Management (Super Admin)
     Route::get('/bugs', [\App\Http\Controllers\Admin\BugReportController::class, 'webIndex'])->name('admin.bugs.index');
     Route::get('/bugs/{id}', [\App\Http\Controllers\Admin\BugReportController::class, 'webShow'])->name('admin.bugs.show');
+    Route::post('/bugs/bulk', [\App\Http\Controllers\Admin\BugReportController::class, 'bulkAction'])->name('admin.bugs.bulk');
     Route::post('/bugs/{id}/update', [\App\Http\Controllers\Admin\BugReportController::class, 'webUpdate'])->name('admin.bugs.update');
 });
 

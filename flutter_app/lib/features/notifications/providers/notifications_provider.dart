@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:gymxbook/core/api/api_client.dart';
 import 'package:gymxbook/features/auth/providers/auth_provider.dart';
@@ -42,11 +43,45 @@ class NotificationsState {
 
 class NotificationsNotifier extends StateNotifier<NotificationsState> {
   final ApiClient _api;
+  Timer? _livePoll;
+  bool _pollingActive = false;
+  int _failureCount = 0;
 
   NotificationsNotifier(this._api) : super(NotificationsState()) {
-    // Auto-load one time for the app-bar badge. When there are no notifications,
-    // do not keep reloading from the AppBar build method (that caused flicker).
+    // Initial load is intentionally one request. MainShell starts background
+    // polling only while an authenticated app is visible.
     Future.microtask(() => load());
+  }
+
+  void startPolling() {
+    if (_pollingActive) return;
+    _pollingActive = true;
+    _scheduleNextPoll(const Duration(seconds: 90));
+  }
+
+  void stopPolling() {
+    _pollingActive = false;
+    _livePoll?.cancel();
+    _livePoll = null;
+  }
+
+  void _scheduleNextPoll(Duration delay) {
+    _livePoll?.cancel();
+    if (!_pollingActive) return;
+    _livePoll = Timer(delay, () => load(force: true));
+  }
+
+  Duration _nextDelay() {
+    if (_failureCount <= 0) return const Duration(seconds: 90);
+    if (_failureCount == 1) return const Duration(seconds: 90);
+    if (_failureCount == 2) return const Duration(seconds: 180);
+    return const Duration(seconds: 300);
+  }
+
+  @override
+  void dispose() {
+    stopPolling();
+    super.dispose();
   }
 
   Future<void> load({bool force = false}) async {
@@ -65,6 +100,7 @@ class NotificationsNotifier extends StateNotifier<NotificationsState> {
           .toList();
       list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
+      _failureCount = 0;
       state = state.copyWith(
         isLoading: false,
         hasLoaded: true,
@@ -73,11 +109,14 @@ class NotificationsNotifier extends StateNotifier<NotificationsState> {
         error: null,
       );
     } catch (e) {
+      _failureCount++;
       state = state.copyWith(
         isLoading: false,
         hasLoaded: true,
         error: e.toString(),
       );
+    } finally {
+      _scheduleNextPoll(_nextDelay());
     }
   }
 

@@ -136,7 +136,7 @@ class _MemberDashboardScreenState extends ConsumerState<MemberDashboardScreen> {
             child: Stack(children: [
               Positioned(right: -10, top: -10, child: Icon(Icons.local_fire_department_rounded, size: 110, color: AppTheme.brand.withOpacity(0.16))),
               Row(children: [
-                GxAvatar(name: (user != null ? user['name'] : null) ?? 'M', size: 60),
+                GxAvatar(name: (user != null ? user['name'] : null) ?? 'M', imageUrl: (user != null ? user['profile_photo_url'] : null)?.toString(), size: 60),
                 const SizedBox(width: 16),
                 Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text('Hi, ${(user != null ? user['name'] : null) ?? 'Member'} 👋', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w700)),

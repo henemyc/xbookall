@@ -17,6 +17,10 @@ class InvoiceController extends BaseController
      */
     public function index(Request $request): JsonResponse
     {
+        if (!$this->canPerformGymAction('invoices.view')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $parentIds = $this->getGymParentIds();
         $status = $request->get('status', '');
 
@@ -51,6 +55,10 @@ class InvoiceController extends BaseController
      */
     public function store(Request $request): JsonResponse
     {
+        if (!$this->canPerformGymAction('invoices.create')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $pid = $this->getParentId();
 
         $request->validate([
@@ -59,6 +67,14 @@ class InvoiceController extends BaseController
             'items.*.title' => 'required|string',
             'items.*.amount' => 'required|numeric|min:0',
         ]);
+
+        $member = User::where('id', (int) $request->user_id)
+            ->where('type', 'trainee')
+            ->whereIn('parent_id', $this->getGymParentIds())
+            ->first();
+        if (!$member) {
+            return $this->error('Member not found for this gym', 404);
+        }
 
         DB::beginTransaction();
         try {
@@ -133,6 +149,9 @@ class InvoiceController extends BaseController
     {
         $parentIds = $this->getGymParentIds();
         $user = $this->currentUser();
+        if ($user->type === 'staff' && !$user->hasStaffPermission('invoices.view')) {
+            return $this->error('Permission denied', 403);
+        }
 
         $query = Invoice::where('id', $id)->whereIn('parent_id', $parentIds);
 
@@ -161,6 +180,10 @@ class InvoiceController extends BaseController
      */
     public function addPayment(Request $request, int $id): JsonResponse
     {
+        if (!$this->canPerformGymAction('invoices.payment')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $pid = $this->getParentId();
         $parentIds = $this->getGymParentIds();
 
@@ -247,6 +270,10 @@ class InvoiceController extends BaseController
      */
     public function destroy(int $id): JsonResponse
     {
+        if (!$this->canPerformGymAction('invoices.delete')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $parentIds = $this->getGymParentIds();
 
         $invoice = Invoice::where('id', $id)->whereIn('parent_id', $parentIds)->first();

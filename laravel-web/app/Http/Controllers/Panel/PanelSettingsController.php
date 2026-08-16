@@ -7,6 +7,7 @@ use App\Models\Setting;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rule;
+use App\Services\PhoneIdentityService;
 
 class PanelSettingsController extends BaseController
 {
@@ -18,16 +19,17 @@ class PanelSettingsController extends BaseController
         $pid = $this->getParentId();
         $parentIds = $this->getGymParentIds();
         $user = auth()->user();
+        $isGymOwner = $this->isGymOwner();
 
-        $gymProfile = [
+        $gymProfile = $isGymOwner ? [
             'company_name' => Setting::getValue('company_name', $pid, ''),
             'company_phone' => Setting::getValue('company_phone', $pid, ''),
             'company_email' => Setting::getValue('company_email', $pid, ''),
             'company_address' => Setting::getValue('company_address', $pid, ''),
             'company_website' => Setting::getValue('company_website', $pid, ''),
-        ];
+        ] : [];
 
-        return view('panel.settings.index', compact('gymProfile', 'user'));
+        return view('panel.settings.index', compact('gymProfile', 'user', 'isGymOwner'));
     }
 
     /**
@@ -35,6 +37,12 @@ class PanelSettingsController extends BaseController
      */
     public function updateProfile(Request $request)
     {
+        // Defense in depth: hiding the form is not enough. A staff user must
+        // never be able to update Gym Name, address or business contact data.
+        if (!$this->isGymOwner()) {
+            abort(403, 'Only gym owner can update gym profile');
+        }
+
         $pid = $this->getParentId();
         $parentIds = $this->getGymParentIds();
 
@@ -91,10 +99,16 @@ class PanelSettingsController extends BaseController
             'phone_number' => 'nullable|string|max:20',
         ]);
 
+        try {
+            $phone = app(PhoneIdentityService::class)->requireAvailable($request->phone_number, (int) $user->id);
+        } catch (\InvalidArgumentException $e) {
+            return back()->withInput()->with('error', $e->getMessage());
+        }
+
         $user->update([
             'name' => $request->name,
             'email' => $request->email,
-            'phone_number' => $request->phone_number,
+            'phone_number' => $phone,
         ]);
 
         $isAjax = $request->ajax() || $request->wantsJson() || $request->header('X-Requested-With') === 'XMLHttpRequest';

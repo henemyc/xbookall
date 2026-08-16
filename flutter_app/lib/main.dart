@@ -8,12 +8,13 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:gymxbook/core/theme/app_theme.dart';
 import 'package:gymxbook/core/theme/theme_provider.dart';
 import 'package:gymxbook/core/widgets/ui.dart';
-import 'package:gymxbook/features/auth/screens/login_screen.dart';
+import 'package:gymxbook/features/auth/screens/onboarding_screen.dart';
 import 'package:gymxbook/features/dashboard/screens/dashboard_screen.dart';
 import 'package:gymxbook/features/members/screens/members_list_screen.dart';
 import 'package:gymxbook/features/attendance/screens/attendance_screen.dart';
 import 'package:gymxbook/features/reports/screens/reports_screen.dart';
 import 'package:gymxbook/features/reports/screens/report_bug_screen.dart';
+import 'package:gymxbook/features/support/screens/help_support_screen.dart';
 import 'package:gymxbook/features/transactions/screens/transactions_screen.dart';
 import 'package:gymxbook/features/invoices/screens/invoices_list_screen.dart';
 import 'package:gymxbook/features/qr/screens/admin_qr_screen.dart';
@@ -27,6 +28,8 @@ import 'package:gymxbook/features/auth/providers/auth_provider.dart';
 import 'package:gymxbook/features/member_dashboard/screens/member_dashboard_screen.dart';
 import 'package:gymxbook/features/member_attendance/screens/member_attendance_screen.dart';
 import 'package:gymxbook/features/member_workout/screens/member_workout_screen.dart';
+import 'package:gymxbook/features/member_diet/screens/member_diet_screen.dart';
+import 'package:gymxbook/features/diets/screens/diet_templates_screen.dart';
 import 'package:gymxbook/features/member_bmi/screens/member_bmi_screen.dart';
 import 'package:gymxbook/features/trainers/screens/trainers_list_screen.dart';
 import 'package:gymxbook/features/trainer_dashboard/screens/trainer_dashboard_screen.dart';
@@ -41,6 +44,7 @@ import 'package:gymxbook/features/lockers/screens/lockers_screen.dart';
 import 'package:gymxbook/features/events/screens/events_screen.dart';
 import 'package:gymxbook/core/providers/nav_provider.dart';
 import 'package:gymxbook/core/storage/secure_storage.dart';
+import 'package:gymxbook/core/notifications/push_notification_service.dart';
 
 // Timezone support (Asia/Kolkata) - full IST support
 import 'package:timezone/data/latest.dart' as tz;
@@ -52,6 +56,16 @@ void main() async {
 
   // Clear restored stale login data after app reinstall before auth check runs.
   await SecureStorage.initializeFreshInstallGuard();
+  // 1.2.0 auth/tenant migration: existing 1.1.x sessions must re-login once.
+  await SecureStorage.enforceAuthSessionSchema();
+
+  // Phase 2 FCM foundation. Failure is non-fatal until Firebase credentials
+  // are present and Laravel device-token registration is added in Phase 3.
+  try {
+    await PushNotificationService.initialize();
+  } catch (e) {
+    debugPrint('FCM initialization skipped: $e');
+  }
 
   // Set timezone to Asia/Kolkata (IST) for the entire app
   try {
@@ -106,8 +120,8 @@ class GymXBookApp extends ConsumerWidget {
         return Listener(
           behavior: HitTestBehavior.translucent,
           onPointerDown: (event) {
-            final focus = FocusManager.instance.primaryFocus;
-            final focusContext = focus?.context;
+            final oldFocus = FocusManager.instance.primaryFocus;
+            final focusContext = oldFocus?.context;
             if (focusContext != null) {
               final renderObject = focusContext.findRenderObject();
               if (renderObject is RenderBox && renderObject.attached) {
@@ -116,7 +130,14 @@ class GymXBookApp extends ConsumerWidget {
                 if (fieldRect.contains(event.position)) return;
               }
             }
-            focus?.unfocus();
+            // Let a different TextField receive this pointer first. The old
+            // code unfocused immediately, making the login bottom sheet's
+            // keyboard visibly close and reopen when changing fields.
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (FocusManager.instance.primaryFocus == oldFocus) {
+                oldFocus?.unfocus();
+              }
+            });
           },
           child: child!,
         );
@@ -375,12 +396,59 @@ class AuthWrapper extends ConsumerStatefulWidget {
 }
 
 class _AuthWrapperState extends ConsumerState<AuthWrapper> {
+  bool _booting = true;
+
+  @override
+  void initState() {
+    super.initState();
+    // Splash is only for the initial SecureStorage + /me session check.
+    // Login attempts also set isLoading=true, but must not replace the landing
+    // screen or disturb its open offcanvas sheet.
+    ref.listenManual(authProvider, (previous, next) {
+      if (_booting && !next.isLoading && mounted) {
+        setState(() => _booting = false);
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final auth = ref.watch(authProvider);
-    if (auth.isLoading) return const _SplashScreen();
-    if (!auth.isLoggedIn) return const LoginScreen();
+    if (_booting && auth.isLoading) return const _SplashScreen();
+    if (!auth.isLoggedIn) return const AuthOnboardingGate();
+    // A token alone is not enough to render tenant pages. Prevent the old
+    // fake "Your gym / 0 data" shell when /me has not verified this session.
+    if (!auth.isHydrated) return const _SessionRecoveryScreen();
     return const MainShell();
+  }
+}
+
+class _SessionRecoveryScreen extends ConsumerWidget {
+  const _SessionRecoveryScreen();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Scaffold(
+      backgroundColor: context.tokens.bg,
+      body: SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(28),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Image.asset('assets/images/no_connection_pana.png', height: 220, fit: BoxFit.contain),
+              const SizedBox(height: 14),
+              Text('Connection required', style: context.typo.titleLarge),
+              const SizedBox(height: 7),
+              Text('We could not load your gym workspace securely. Connect to the internet and try again.', textAlign: TextAlign.center, style: context.typo.bodyMedium?.copyWith(color: context.tokens.textTertiary)),
+              const SizedBox(height: 20),
+              FireButton(label: 'Try Again', icon: Icons.refresh_rounded, expand: false, onPressed: () => ref.read(authProvider.notifier).checkAuth()),
+              const SizedBox(height: 8),
+              TextButton(onPressed: () => ref.read(authProvider.notifier).logout(), child: const Text('Logout')),
+            ]),
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -435,7 +503,9 @@ class _MainShellState extends ConsumerState<MainShell> with WidgetsBindingObserv
   DateTime? _lastSubWarning;
   DateTime? _lastExpiredOverlay;
   bool _forceUpdateShown = false;
-  static const String currentAppVersion = '1.1.1';
+  bool _isOffline = false;
+  Timer? _networkTimer;
+  static const String currentAppVersion = '1.2.0';
 
   @override
   void initState() {
@@ -445,15 +515,73 @@ class _MainShellState extends ConsumerState<MainShell> with WidgetsBindingObserv
       ref.listenManual(navIndexProvider, (prev, next) {
         if (next != _index && mounted) _goTo(next, fromNav: false);
       });
+      PushNotificationService.setNotificationTapHandler(_handlePushTap);
+      PushNotificationService.setForegroundMessageHandler(_handleForegroundPush);
       _checkSubscription();
       _checkForceUpdate();
+      _checkNetwork();
+      _startNetworkPolling();
 
-      // Eagerly load notifications so the app bar badge shows the count
-      // immediately (without requiring the user to open the notifications page first).
+      // FCM refreshes notifications instantly. Polling is only a low-frequency
+      // fallback while the app is visibly active.
       if (ref.read(authProvider).isLoggedIn) {
         ref.read(notificationsProvider.notifier).load();
+        ref.read(notificationsProvider.notifier).startPolling();
       }
     });
+  }
+
+  void _startNetworkPolling() {
+    _networkTimer?.cancel();
+    _networkTimer = Timer.periodic(const Duration(seconds: 90), (_) => _checkNetwork());
+  }
+
+  void _stopNetworkPolling() {
+    _networkTimer?.cancel();
+    _networkTimer = null;
+  }
+
+  Future<void> _checkNetwork() async {
+    try {
+      await ref.read(apiClientProvider).getSystemStatus();
+      if (mounted && _isOffline) setState(() => _isOffline = false);
+    } catch (_) {
+      if (mounted && !_isOffline) setState(() => _isOffline = true);
+    }
+  }
+
+  Widget _offlineBody() {
+    return SafeArea(
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(28, 12, 28, 28),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Image.asset('assets/images/no_connection_pana.png', height: 220, fit: BoxFit.contain),
+            const SizedBox(height: 12),
+            Text('You are offline', style: context.typo.titleLarge),
+            const SizedBox(height: 6),
+            Text('Live gym data is hidden until a secure connection returns.', textAlign: TextAlign.center, style: context.typo.bodyMedium?.copyWith(color: context.tokens.textTertiary)),
+            const SizedBox(height: 18),
+            FireButton(label: 'Try Again', icon: Icons.refresh_rounded, expand: false, onPressed: _checkNetwork),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  void _showOfflineSheet() {
+    showAppSheet(context, child: Padding(
+      padding: const EdgeInsets.fromLTRB(24, 8, 24, 26),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Image.asset('assets/images/no_connection_pana.png', height: 205, fit: BoxFit.contain),
+        const SizedBox(height: 8),
+        Text('You are offline', style: context.typo.titleLarge),
+        const SizedBox(height: 6),
+        Text('Some live data and subscription features are unavailable until your connection returns.', textAlign: TextAlign.center, style: context.typo.bodySmall?.copyWith(color: context.tokens.textTertiary)),
+        const SizedBox(height: 18),
+        FireButton(label: 'Try Again', icon: Icons.refresh_rounded, onPressed: () async { await _checkNetwork(); if (mounted && !_isOffline) Navigator.pop(context); }),
+      ]),
+    ));
   }
 
   void _checkSubscription() {
@@ -638,19 +766,60 @@ class _MainShellState extends ConsumerState<MainShell> with WidgetsBindingObserv
     );
   }
 
+  Future<void> _handleForegroundPush(Map<String, dynamic> data) async {
+    try { await ref.read(notificationsProvider.notifier).load(force: true); } catch (_) {}
+  }
+
+  Future<void> _handlePushTap(Map<String, dynamic> data) async {
+    if (!mounted) return;
+    final userType = (ref.read(authProvider).user?['type'] ?? 'admin').toString();
+    final route = (data['route'] ?? 'notifications').toString();
+    int? index;
+
+    if (route == 'notifications') {
+      if (userType == 'trainee') index = 6;
+      if (userType == 'admin' || userType == 'owner' || userType == 'staff') index = 11;
+    } else if (route == 'notices') {
+      if (userType == 'trainee') index = 5;
+      if (userType == 'admin' || userType == 'owner' || userType == 'staff') index = 10;
+    } else if (route == 'my_diet' && userType == 'trainee') {
+      index = 8;
+    }
+
+    final notificationId = int.tryParse((data['notification_id'] ?? '').toString());
+    if (notificationId != null) {
+      try { await ref.read(notificationsProvider.notifier).markAsRead(notificationId); } catch (_) {}
+    }
+    try { await ref.read(notificationsProvider.notifier).load(force: true); } catch (_) {}
+
+    final memberOrTrainer = userType == 'trainee' || userType == 'trainer';
+    if (index != null && (memberOrTrainer || _planCanIndex(index))) {
+      _goTo(index);
+    } else if (mounted) {
+      Toast.info(context, 'Notification opened.');
+    }
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _stopNetworkPolling();
+    ref.read(notificationsProvider.notifier).stopPolling();
     _pageController.dispose();
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState lifecycleState) {
-    if (lifecycleState == AppLifecycleState.paused) {
+    if (lifecycleState == AppLifecycleState.paused || lifecycleState == AppLifecycleState.inactive) {
       _lastPaused = DateTime.now();
+      _stopNetworkPolling();
+      ref.read(notificationsProvider.notifier).stopPolling();
     }
     if (lifecycleState == AppLifecycleState.resumed) {
+      _checkNetwork();
+      _startNetworkPolling();
+      ref.read(notificationsProvider.notifier).startPolling();
       // Only silently refresh if app was backgrounded for 5+ minutes
       // Short switches (phone call, notification, 1-second home press) are ignored
       if (_lastPaused != null && DateTime.now().difference(_lastPaused!).inMinutes >= 5) {
@@ -705,7 +874,9 @@ class _MainShellState extends ConsumerState<MainShell> with WidgetsBindingObserv
   ];
   final _adminTitles = ['', 'Members', 'Attendance', 'Reports', 'History', 'Trainers', 'Plans', 'Classes', 'Expenses', 'Products', 'Notices', 'Notifications', 'Gym QR Code', 'Invoices', 'Settings', 'Lockers', 'Events'];
 
-  bool _planFeatureEnabled(String key, {bool legacyDefault = true}) {
+  // Fail closed: unknown/missing plan entitlement must never unlock paid
+  // modules after an offline restore or stale local session.
+  bool _planFeatureEnabled(String key, {bool legacyDefault = false}) {
     final user = ref.read(authProvider).user;
     final tier = user?['current_tier'];
     final features = user?['plan_features'];
@@ -716,15 +887,17 @@ class _MainShellState extends ConsumerState<MainShell> with WidgetsBindingObserv
       return !['0', 'false', 'no', 'disabled', 'coming_soon'].contains(text);
     }
     final tierCode = tier is Map ? (tier['code'] ?? '').toString().toLowerCase() : '';
-    if (tierCode == 'bronze' && (key == 'trainers_enabled' || key == 'lockers_enabled')) return false;
+    if (tierCode == 'bronze' && (key == 'trainers_enabled' || key == 'lockers_enabled' || key == 'classes_enabled')) return false;
     return legacyDefault;
   }
 
   bool get _showTrainersForPlan => _planFeatureEnabled('trainers_enabled');
   bool get _showLockersForPlan => _planFeatureEnabled('lockers_enabled');
+  bool get _showClassesForPlan => _planFeatureEnabled('classes_enabled');
 
   bool _planCanIndex(int index) {
     if (index == 5 && !_showTrainersForPlan) return false;
+    if (index == 7 && !_showClassesForPlan) return false;
     if (index == 15 && !_showLockersForPlan) return false;
     return true;
   }
@@ -738,8 +911,9 @@ class _MainShellState extends ConsumerState<MainShell> with WidgetsBindingObserv
     NoticesListScreen(),
     NotificationsScreen(),
     MemberBmiScreen(),
+    MemberDietScreen(),
   ];
-  final _memberTitles = ['Home', 'My Attendance', 'Scan QR', 'Workout', 'Settings', 'Notices', 'Notifications', 'BMI Calculator'];
+  final _memberTitles = ['Home', 'My Attendance', 'Scan QR', 'Workout', 'Settings', 'Notices', 'Notifications', 'BMI Calculator', 'My Diet'];
 
   final _trainerPages = const [
     TrainerDashboardScreen(),
@@ -780,6 +954,9 @@ class _MainShellState extends ConsumerState<MainShell> with WidgetsBindingObserv
   }
 
   bool _staffCanIndex(int index) {
+    // Staff always need personal account settings, password, notification
+    // preferences and logout, even without business settings permission.
+    if (index == 14) return true;
     const permissionByIndex = <int, String>{
       0: 'dashboard.view',
       1: 'members.view',
@@ -825,7 +1002,7 @@ class _MainShellState extends ConsumerState<MainShell> with WidgetsBindingObserv
       _staffGuard('dashboard.view', const NotificationsScreen()),
       _staffGuard('attendance.qr', const AdminQRScreen()),
       _staffGuard('invoices.view', const InvoicesListScreen()),
-      _staffGuard('settings.view', const SettingsScreen()),
+      const SettingsScreen(),
       _staffGuard('lockers.view', const LockersScreen()),
       _staffGuard('events.view', const EventsScreen()),
     ];
@@ -840,7 +1017,7 @@ class _MainShellState extends ConsumerState<MainShell> with WidgetsBindingObserv
     if (_can('transactions.view')) items.add(const _NavSpec(Icons.swap_horiz_rounded, Icons.swap_horiz_rounded, 'History', 4));
     if (items.length < 5 && _can('invoices.view')) items.add(const _NavSpec(Icons.receipt_long_outlined, Icons.receipt_long_rounded, 'Invoices', 13));
     if (items.length < 5 && _can('expenses.view')) items.add(const _NavSpec(Icons.account_balance_wallet_outlined, Icons.account_balance_wallet_rounded, 'Expenses', 8));
-    if (items.length < 5 && _can('settings.view')) items.add(const _NavSpec(Icons.settings_outlined, Icons.settings_rounded, 'Settings', 14));
+    if (items.length < 5) items.add(const _NavSpec(Icons.settings_outlined, Icons.settings_rounded, 'Settings', 14));
     if (items.isEmpty) items.add(const _NavSpec(Icons.lock_outline_rounded, Icons.lock_rounded, 'No Access', 0));
     return items.take(5).toList();
   }
@@ -853,7 +1030,7 @@ class _MainShellState extends ConsumerState<MainShell> with WidgetsBindingObserv
       if (_can('attendance.view')) _item(Icons.fact_check_rounded, 'Attendance', 2, AppTheme.warning),
       if (_can('trainers.view') && _showTrainersForPlan) _item(Icons.sports_martial_arts_rounded, 'Trainers', 5, AppTheme.success),
       if (_can('plans.view')) _item(Icons.card_membership_rounded, 'Plans', 6, const Color(0xFF8B5CF6)),
-      if (_can('classes.view')) _item(Icons.self_improvement_rounded, 'Classes', 7, const Color(0xFFEC4899)),
+      if (_can('classes.view') && _showClassesForPlan) _item(Icons.self_improvement_rounded, 'Classes', 7, const Color(0xFFEC4899)),
       if (_can('reports.view')) _item(Icons.bar_chart_rounded, 'Reports', 3, const Color(0xFF06B6D4)),
       if (_can('attendance.qr')) _item(Icons.qr_code_2_rounded, 'Gym QR Code', 12, const Color(0xFF6366F1)),
       if (_canAny(['invoices.view', 'transactions.view', 'expenses.view'])) _label('FINANCE'),
@@ -867,7 +1044,7 @@ class _MainShellState extends ConsumerState<MainShell> with WidgetsBindingObserv
       if (_can('notices.view')) _item(Icons.campaign_rounded, 'Notices', 10, const Color(0xFF8B5CF6)),
       _label('ACCOUNT'),
       _pushItem(Icons.bug_report_rounded, 'Report a Bug', const ReportBugScreen(), AppTheme.danger),
-      if (_can('settings.view')) _item(Icons.settings_rounded, 'Settings', 14, AppTheme.info),
+      _item(Icons.settings_rounded, 'Settings', 14, AppTheme.info),
     ];
   }
 
@@ -903,7 +1080,10 @@ class _MainShellState extends ConsumerState<MainShell> with WidgetsBindingObserv
     final pages = isTrainer ? _trainerPages : (isMember ? _memberPages : (isStaff ? _staffAdminPages() : _adminPages));
     final titles = isTrainer ? _trainerTitles : (isMember ? _memberTitles : _adminTitles);
     if (_index >= pages.length) _index = 0;
-    if (!_planCanIndex(_index)) _index = 0;
+    // Index values overlap between role shells. For example Member Notices=5
+    // and BMI=7, while Admin Trainers=5 and Classes=7. Entitlement guards
+    // apply only to the admin/staff shell, never Member/Trainer indexes.
+    if (!isMember && !isTrainer && !_planCanIndex(_index)) _index = 0;
     if (isStaff && !_staffCanIndex(_index)) _index = _staffDefaultIndex();
 
     final t = context.tokens;
@@ -944,7 +1124,9 @@ class _MainShellState extends ConsumerState<MainShell> with WidgetsBindingObserv
       child: Scaffold(
         drawer: _buildDrawer(auth, isMember, isTrainer, isStaff),
         appBar: _buildAppBar(titles, isMember, isTrainer, isStaff),
-        body: SafeArea(
+        body: _isOffline
+            ? _offlineBody()
+            : SafeArea(
           bottom: false,
           child: _index < _navCount
               // Primary tabs → swipeable PageView with smooth animation.
@@ -1022,6 +1204,25 @@ class _MainShellState extends ConsumerState<MainShell> with WidgetsBindingObserv
           ),
         ),
       ],
+      bottom: _isOffline
+          ? PreferredSize(
+              preferredSize: const Size.fromHeight(42),
+              child: InkWell(
+                onTap: _showOfflineSheet,
+                child: Container(
+                  width: double.infinity,
+                  color: AppTheme.warning.withOpacity(.14),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  child: Row(children: [
+                    const Icon(Icons.wifi_off_rounded, size: 18, color: AppTheme.warning),
+                    const SizedBox(width: 9),
+                    Expanded(child: Text('You are offline — some features are unavailable', style: context.typo.bodySmall?.copyWith(color: context.tokens.text, fontWeight: FontWeight.w700))),
+                    const Icon(Icons.info_outline_rounded, size: 17, color: AppTheme.warning),
+                  ]),
+                ),
+              ),
+            )
+          : null,
     );
   }
 
@@ -1093,9 +1294,14 @@ class _MainShellState extends ConsumerState<MainShell> with WidgetsBindingObserv
               padding: const EdgeInsets.all(18),
               decoration: BoxDecoration(gradient: AppTheme.fireGradient, borderRadius: BorderRadius.circular(22), boxShadow: [BoxShadow(color: AppTheme.brand.withOpacity(0.35), blurRadius: 20, offset: const Offset(0, 8))]),
               child: Row(children: [
-                Stack(children: [
-                  CircleAvatar(radius: 27, backgroundColor: Colors.white.withOpacity(0.15), backgroundImage: const AssetImage('assets/images/gymxbook_logo_icon.png'), child: null),
-                  Positioned(bottom: 0, right: 0, child: Container(width: 14, height: 14, decoration: BoxDecoration(color: AppTheme.success, shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 2)))),
+                Stack(clipBehavior: Clip.none, children: [
+                  GxAvatar(
+                    name: (auth.user?['company_name'] ?? auth.user?['name'] ?? (isMember ? 'Member' : 'Gym Owner')).toString(),
+                    imageUrl: auth.user?['profile_photo_url']?.toString(),
+                    size: 54,
+                    circular: true,
+                  ),
+                  Positioned(bottom: -1, right: -1, child: Container(width: 14, height: 14, decoration: BoxDecoration(color: AppTheme.success, shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 2)))),
                 ]),
                 const SizedBox(width: 14),
                 Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -1128,6 +1334,7 @@ class _MainShellState extends ConsumerState<MainShell> with WidgetsBindingObserv
                         _item(Icons.fact_check_rounded, 'My Attendance', 1, AppTheme.info),
                         _item(Icons.qr_code_scanner_rounded, 'Scan QR Attendance', 2, AppTheme.success),
                         _item(Icons.fitness_center_rounded, 'Workout Plan', 3, AppTheme.warning),
+                        _item(Icons.restaurant_menu_rounded, 'My Diet', 8, AppTheme.success),
                         _item(Icons.calculate_rounded, 'BMI Calculator', 7, AppTheme.brand),
                         _item(Icons.campaign_rounded, 'Notices', 5, const Color(0xFF8B5CF6)),
                         _item(Icons.notifications_none_rounded, 'Notifications', 6, AppTheme.danger),
@@ -1143,7 +1350,7 @@ class _MainShellState extends ConsumerState<MainShell> with WidgetsBindingObserv
                         if (_showTrainersForPlan) _item(Icons.sports_martial_arts_rounded, 'Trainers', 5, AppTheme.success),
                         _item(Icons.fact_check_rounded, 'Attendance', 2, AppTheme.warning),
                         _item(Icons.card_membership_rounded, 'Plans', 6, const Color(0xFF8B5CF6)),
-                        _item(Icons.self_improvement_rounded, 'Classes', 7, const Color(0xFFEC4899)),
+if (_showClassesForPlan) _item(Icons.self_improvement_rounded, 'Classes', 7, const Color(0xFFEC4899)),
                         _item(Icons.bar_chart_rounded, 'Reports', 3, const Color(0xFF06B6D4)),
                         _item(Icons.qr_code_2_rounded, 'Gym QR Code', 12, const Color(0xFF6366F1)),
                         _label('MANAGE'),
@@ -1151,6 +1358,7 @@ class _MainShellState extends ConsumerState<MainShell> with WidgetsBindingObserv
                         _item(Icons.swap_horiz_rounded, 'History', 4, AppTheme.info),
                         _item(Icons.account_balance_wallet_rounded, 'Expenses', 8, AppTheme.danger),
                         _item(Icons.storefront_rounded, 'Products', 9, AppTheme.warning),
+                        _pushItem(Icons.restaurant_menu_rounded, 'Diet Templates', const DietTemplatesScreen(), AppTheme.success),
                         if (_showLockersForPlan) _item(Icons.lock_outline_rounded, 'Lockers', 15, const Color(0xFF10B981)),
                         _item(Icons.event_rounded, 'Events', 16, const Color(0xFFF59E0B)),
                         _item(Icons.campaign_rounded, 'Notices', 10, const Color(0xFF8B5CF6)),
@@ -1158,7 +1366,9 @@ class _MainShellState extends ConsumerState<MainShell> with WidgetsBindingObserv
                         _label('OTHER'),
                         _pushItem(Icons.workspace_premium_rounded, 'Subscription', SubscriptionScreen(), AppTheme.brand),
                         _pushItem(Icons.qr_code_scanner_rounded, 'Web Login', const WebLoginScanScreen(), const Color(0xFF6366F1)),
+                        _pushItem(Icons.support_agent_rounded, 'Help & Support', const HelpSupportScreen(), AppTheme.info),
                         _pushItem(Icons.bug_report_rounded, 'Report a Bug', ReportBugScreen(), AppTheme.danger),
+                        _externalItem(Icons.star_rate_rounded, 'Rate Us', AppTheme.warning, _openRateUs),
                         _item(Icons.settings_rounded, 'Settings', 14, AppTheme.info),
                       ],
               ),
@@ -1168,7 +1378,7 @@ class _MainShellState extends ConsumerState<MainShell> with WidgetsBindingObserv
               child: Row(children: [
                 Text('GymXBook', style: context.typo.labelSmall?.copyWith(color: t.textTertiary, letterSpacing: 0.5)),
                 const Spacer(),
-                Text('v1.1.1', style: context.typo.labelSmall?.copyWith(color: t.textTertiary)),
+                Text('v1.2.0', style: context.typo.labelSmall?.copyWith(color: t.textTertiary)),
               ]),
             ),
           ],
@@ -1275,6 +1485,42 @@ class _MainShellState extends ConsumerState<MainShell> with WidgetsBindingObserv
               const SizedBox(width: 12),
               Expanded(child: Text(title, style: context.typo.titleSmall?.copyWith(fontSize: 13.5, fontWeight: selected ? FontWeight.w700 : FontWeight.w500, color: selected ? t.text : t.textSecondary))),
               if (selected) Container(width: 6, height: 6, decoration: const BoxDecoration(color: AppTheme.brand, shape: BoxShape.circle)),
+            ]),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openRateUs() async {
+    final marketUri = Uri.parse('market://details?id=com.gymxbook.app');
+    final webUri = Uri.parse('https://play.google.com/store/apps/details?id=com.gymxbook.app');
+    Navigator.pop(context);
+    try {
+      final opened = await launchUrl(marketUri, mode: LaunchMode.externalApplication);
+      if (opened) return;
+    } catch (_) {}
+    await launchUrl(webUri, mode: LaunchMode.externalApplication);
+  }
+
+  /// Drawer item that opens an external destination such as Google Play.
+  Widget _externalItem(IconData icon, String title, Color color, Future<void> Function() onTap) {
+    final t = context.tokens;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 1),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: () { HapticFeedback.selectionClick(); onTap(); },
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            child: Row(children: [
+              Container(width: 34, height: 34, decoration: BoxDecoration(color: color.withOpacity(context.isDark ? 0.16 : 0.12), borderRadius: BorderRadius.circular(10)), child: Icon(icon, size: 18, color: color)),
+              const SizedBox(width: 12),
+              Expanded(child: Text(title, style: context.typo.titleSmall?.copyWith(fontSize: 13.5, fontWeight: FontWeight.w500, color: t.textSecondary))),
+              Icon(Icons.open_in_new_rounded, size: 16, color: t.textTertiary),
             ]),
           ),
         ),
@@ -1391,6 +1637,7 @@ class _KeepAlivePageState extends State<_KeepAlivePage> with AutomaticKeepAliveC
   }
 }
 
+// Repaired: removed duplicated trailing theme-toggle fragment.
 class _ThemeToggleButton extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {

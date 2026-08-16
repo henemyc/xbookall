@@ -10,6 +10,7 @@ use App\Models\User;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use App\Services\PhoneIdentityService;
 use Illuminate\Support\Facades\Schema;
 
 class PanelTrainerController extends BaseController
@@ -88,8 +89,8 @@ class PanelTrainerController extends BaseController
             return $this->trainerError($request, 'Phone must be a valid 10-digit Indian mobile number', 422);
         }
 
-        if (User::where('type', 'trainer')->where('parent_id', $pid)->where('phone_number', $phone)->exists()) {
-            return $this->trainerError($request, 'A trainer with this phone number already exists', 422);
+        if (!app(PhoneIdentityService::class)->isAvailable($phone)) {
+            return $this->trainerError($request, PhoneIdentityService::DUPLICATE_MESSAGE, 422);
         }
 
         $email = trim($data['email'] ?? '');
@@ -212,8 +213,8 @@ class PanelTrainerController extends BaseController
             return $this->trainerError($request, 'Phone must be a valid 10-digit Indian mobile number', 422);
         }
 
-        if (User::where('type', 'trainer')->where('parent_id', $pid)->where('phone_number', $phone)->where('id', '!=', $trainer->id)->exists()) {
-            return $this->trainerError($request, 'A trainer with this phone number already exists', 422);
+        if (!app(PhoneIdentityService::class)->isAvailable($phone, (int) $trainer->id)) {
+            return $this->trainerError($request, PhoneIdentityService::DUPLICATE_MESSAGE, 422);
         }
 
         $email = trim($data['email'] ?? '');

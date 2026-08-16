@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:gymxbook/core/api/api_client.dart';
 import 'package:gymxbook/core/storage/secure_storage.dart';
+import 'package:gymxbook/core/notifications/push_notification_service.dart';
 
 final apiClientProvider = Provider<ApiClient>((ref) => ApiClient());
 
@@ -12,18 +14,21 @@ final authProvider = StateNotifierProvider<AuthNotifier, AuthState>((ref) {
 class AuthState {
   final bool isLoading;
   final bool isLoggedIn;
+  /// True only after /me has returned the verified tenant/gym session payload.
+  final bool isHydrated;
   final String? error;
   final Map<String, dynamic>? user;
   final Map<String, dynamic>? subscription;
   final int? subscriptionDaysLeft;
   final bool subscriptionExpired;
 
-  AuthState({this.isLoading = false, this.isLoggedIn = false, this.error, this.user, this.subscription, this.subscriptionDaysLeft, this.subscriptionExpired = false});
+  AuthState({this.isLoading = false, this.isLoggedIn = false, this.isHydrated = false, this.error, this.user, this.subscription, this.subscriptionDaysLeft, this.subscriptionExpired = false});
 
-  AuthState copyWith({bool? isLoading, bool? isLoggedIn, String? error, Map<String, dynamic>? user, Map<String, dynamic>? subscription, int? subscriptionDaysLeft, bool? subscriptionExpired}) {
+  AuthState copyWith({bool? isLoading, bool? isLoggedIn, bool? isHydrated, String? error, Map<String, dynamic>? user, Map<String, dynamic>? subscription, int? subscriptionDaysLeft, bool? subscriptionExpired}) {
     return AuthState(
       isLoading: isLoading ?? this.isLoading,
       isLoggedIn: isLoggedIn ?? this.isLoggedIn,
+      isHydrated: isHydrated ?? this.isHydrated,
       error: error,
       user: user ?? this.user,
       subscription: subscription ?? this.subscription,
@@ -35,8 +40,21 @@ class AuthState {
 
 class AuthNotifier extends StateNotifier<AuthState> {
   final ApiClient _api;
+  late final StreamSubscription<void> _authExpiredSubscription;
+
   AuthNotifier(this._api) : super(AuthState(isLoading: true)) {
+    _authExpiredSubscription = ApiClient.authExpired.listen((_) async {
+      await SecureStorage.clearAuthSession(notice: 'Your session expired. Please login again.');
+      state = AuthState(isLoggedIn: false, isLoading: false);
+    });
+    PushNotificationService.setTokenSyncHandler(_syncFcmToken);
     checkAuth();
+  }
+
+  @override
+  void dispose() {
+    _authExpiredSubscription.cancel();
+    super.dispose();
   }
 
   String _friendlyError(dynamic e) {
@@ -75,6 +93,11 @@ return 'Invalid phone or password';
         }
       }
 
+      // Never expose raw TLS/Dio exceptions to customers. Certificate failures
+      // must still be fixed on the server/device; we do not bypass SSL checks.
+      if (msg.contains('certificate_verify_failed') || msg.contains('handshakeexception') || msg.contains('self signed certificate')) {
+        return 'Secure connection failed. Please update the app or try another network.';
+      }
       if (msg.contains('401') || msg.contains('unauthorized')) return 'Invalid phone or password';
       if (msg.contains('500')) return 'Server error. Please contact support.';
       if (msg.contains('404')) return 'Login API not found. Please update backend routes.';
@@ -139,10 +162,10 @@ return 'Invalid phone or password';
       final gymName = (gymInfo['name'] ?? '').toString().trim();
       user['gym_info'] = gymInfo;
       if (gymName.isNotEmpty) {
+        // Keep the account holder's personal name intact. Gym UI can use
+        // company_name, while Settings → Personal Profile must show/save the
+        // real owner name rather than repeatedly replacing it with gym name.
         user['company_name'] = gymName;
-        if ((user['type'] ?? '').toString() == 'admin' || (user['type'] ?? '').toString() == 'owner' || (user['type'] ?? '').toString() == 'staff') {
-          user['name'] = gymName;
-        }
       }
       if (gymInfo['owner_id'] != null) user['gym_owner_id'] = gymInfo['owner_id'];
     }
@@ -173,6 +196,32 @@ return 'Invalid phone or password';
     return user;
   }
 
+  bool _isCompleteSessionPayload(Map<String, dynamic> payload) {
+    final rawUser = payload['user'];
+    final gymInfo = payload['gym_info'];
+    if (rawUser is! Map || gymInfo is! Map) return false;
+
+    final userId = int.tryParse((rawUser['id'] ?? '').toString()) ?? 0;
+    final ownerId = int.tryParse((gymInfo['owner_id'] ?? '').toString()) ?? 0;
+    final type = (rawUser['type'] ?? payload['user_type'] ?? '').toString();
+    final gymName = (gymInfo['name'] ?? '').toString().trim();
+
+    if (userId <= 0 || ownerId <= 0 || gymName.isEmpty) return false;
+    return const {'admin', 'owner', 'staff', 'trainer', 'trainee'}.contains(type);
+  }
+
+  Future<void> _invalidateIncompleteSession() async {
+    await SecureStorage.clearAuthSession(
+      notice: 'Your saved session was incomplete. Please login again to continue.',
+    );
+    state = AuthState(
+      isLoggedIn: false,
+      isLoading: false,
+      isHydrated: false,
+      error: 'Your saved session was incomplete. Please login again to continue.',
+    );
+  }
+
   /// Silent refresh — updates user data without showing loading spinner.
   /// Used when app resumes from background so the UI stays intact.
   Future<void> silentRefresh() async {
@@ -183,8 +232,12 @@ return 'Invalid phone or password';
     }
     try {
       final res = await _api.me();
+      if (!_isCompleteSessionPayload(res)) {
+        await _invalidateIncompleteSession();
+        return;
+      }
       state = state.copyWith(
-        isLoggedIn: true, user: _userFromPayload(res, fallback: state.user), subscription: res['subscription'], error: null,
+        isLoggedIn: true, isHydrated: true, user: _userFromPayload(res, fallback: state.user), subscription: res['subscription'], error: null,
         subscriptionDaysLeft: res['subscription_days_left'] == null ? null : int.tryParse(res['subscription_days_left'].toString()),
         subscriptionExpired: res['subscription_expired'] == true,
       );
@@ -192,7 +245,7 @@ return 'Invalid phone or password';
       // Never log out on offline/timeout app resume. Only a real 401/403
       // should remove the local session.
       if (_isAuthFailure(e)) {
-        await SecureStorage.clear();
+        await SecureStorage.clearAuthSession(notice: 'Your session expired. Please login again.');
         state = AuthState(isLoggedIn: false, isLoading: false);
       }
     }
@@ -207,15 +260,20 @@ return 'Invalid phone or password';
     try {
       state = state.copyWith(isLoading: true);
       final res = await _api.me();
+      if (!_isCompleteSessionPayload(res)) {
+        await _invalidateIncompleteSession();
+        return;
+      }
       state = state.copyWith(
-        isLoading: false, isLoggedIn: true, user: _userFromPayload(res, fallback: state.user), subscription: res['subscription'], error: null,
+        isLoading: false, isLoggedIn: true, isHydrated: true, user: _userFromPayload(res, fallback: state.user), subscription: res['subscription'], error: null,
         subscriptionDaysLeft: res['subscription_days_left'] == null ? null : int.tryParse(res['subscription_days_left'].toString()),
         subscriptionExpired: res['subscription_expired'] == true,
       );
+      _syncCurrentFcmToken();
       _trackAppOpenSilently();
     } catch (e) {
       if (_isAuthFailure(e)) {
-        await SecureStorage.clear();
+        await SecureStorage.clearAuthSession(notice: 'Your session expired. Please login again.');
         state = AuthState(isLoggedIn: false, isLoading: false);
         return;
       }
@@ -227,15 +285,17 @@ return 'Invalid phone or password';
         state = state.copyWith(
           isLoading: false,
           isLoggedIn: true,
+          isHydrated: false,
           user: state.user ?? cachedUser,
           error: null,
         );
         return;
       }
 
-      // Unknown server error: keep token/session to avoid forced logout.
-      final cachedUser = await _cachedUserFromStorage();
-      state = state.copyWith(isLoading: false, isLoggedIn: true, user: state.user ?? cachedUser, error: null);
+      // A non-network /me failure is an integrity/session problem, not an
+      // offline state. Clear it rather than leaving a partially trusted shell.
+      await SecureStorage.clearAuthSession(notice: 'Your session could not be verified. Please login again.');
+      state = AuthState(isLoggedIn: false, isLoading: false);
     }
   }
 
@@ -249,23 +309,33 @@ return 'Invalid phone or password';
           (res['token'] != null || res['access_token'] != null);
 
       if (isSuccess) {
-        final user = _userFromPayload(res);
+        // Login response can be intentionally compact or contain stale gateway
+        // data. Never open MainShell until /me has confirmed the exact tenant,
+        // gym info, permissions, plan features and subscription.
+        final hydrated = await _api.me();
+        if (!_isCompleteSessionPayload(hydrated)) {
+          await _invalidateIncompleteSession();
+          return false;
+        }
+        final user = _userFromPayload(hydrated, fallback: _userFromPayload(res));
 
         await SecureStorage.saveUser(
           id: (user['id'] ?? 0).toString(),
           type: user['type'] ?? 'admin',
           name: (user['company_name'] ?? user['name'] ?? '').toString(),
-          email: user['email'] ?? '',
+          email: (user['email'] ?? '').toString(),
         );
         state = state.copyWith(
           isLoading: false,
           isLoggedIn: true,
+          isHydrated: true,
           user: user,
-          subscription: res['subscription'],
-          subscriptionDaysLeft: res['subscription_days_left'] == null ? null : int.tryParse(res['subscription_days_left'].toString()),
-          subscriptionExpired: res['subscription_expired'] == true,
+          subscription: hydrated['subscription'],
+          subscriptionDaysLeft: hydrated['subscription_days_left'] == null ? null : int.tryParse(hydrated['subscription_days_left'].toString()),
+          subscriptionExpired: hydrated['subscription_expired'] == true,
           error: null,
         );
+        _syncCurrentFcmToken();
         _trackAppOpenSilently();
         return true;
       } else {
@@ -282,13 +352,27 @@ return 'Invalid phone or password';
   Future<bool> register({
     required String businessName,
     required String name,
-    required String email,
+    String? email,
     required String phone,
     required String password,
+    String? address,
+    String? city,
+    required String acquisitionSource,
+    String? acquisitionDetail,
   }) async {
     try {
       state = state.copyWith(isLoading: true, error: null);
-      final res = await _api.register(businessName: businessName, name: name, email: email, phone: phone, password: password);
+      final res = await _api.register(
+        businessName: businessName,
+        name: name,
+        email: email,
+        phone: phone,
+        password: password,
+        address: address,
+        city: city,
+        acquisitionSource: acquisitionSource,
+        acquisitionDetail: acquisitionDetail,
+      );
 
       // Backend returns token on success (same as login)
       final bool isSuccess = (res['success'] == true) ||
@@ -301,24 +385,31 @@ return 'Invalid phone or password';
           await SecureStorage.saveToken(token);
         }
 
-        final user = _userFromPayload(res);
+        final hydrated = await _api.me();
+        if (!_isCompleteSessionPayload(hydrated)) {
+          await _invalidateIncompleteSession();
+          return false;
+        }
+        final user = _userFromPayload(hydrated, fallback: _userFromPayload(res));
 
         await SecureStorage.saveUser(
           id: (user['id'] ?? 0).toString(),
           type: user['type'] ?? 'admin',
           name: (user['company_name'] ?? user['name'] ?? name ?? businessName).toString(),
-          email: user['email'] ?? email,
+          email: (user['email'] ?? email ?? '').toString(),
         );
 
         state = state.copyWith(
           isLoading: false,
           isLoggedIn: true,
+          isHydrated: true,
           user: user,
-          subscription: res['subscription'],
-          subscriptionDaysLeft: res['subscription_days_left'] == null ? null : int.tryParse(res['subscription_days_left'].toString()),
-          subscriptionExpired: res['subscription_expired'] == true,
+          subscription: hydrated['subscription'],
+          subscriptionDaysLeft: hydrated['subscription_days_left'] == null ? null : int.tryParse(hydrated['subscription_days_left'].toString()),
+          subscriptionExpired: hydrated['subscription_expired'] == true,
           error: null,
         );
+        _syncCurrentFcmToken();
         _trackAppOpenSilently();
         return true;
       } else {
@@ -331,12 +422,87 @@ return 'Invalid phone or password';
     }
   }
 
+  /// Applies photo-upload data immediately so the Settings and member
+  /// dashboards repaint without waiting for another /me request.
+  void applyProfilePhoto({String? profile, String? profilePhotoUrl}) {
+    final current = Map<String, dynamic>.from(state.user ?? const {});
+    current['profile'] = profile;
+    current['profile_photo_url'] = profilePhotoUrl;
+    state = state.copyWith(user: current, error: null);
+  }
+
+  Future<bool> loginWithOtp({required String phone, required String otp}) async {
+    try {
+      state = state.copyWith(isLoading: true, error: null);
+      final res = await _api.verifyLoginOtp(phone: phone, otp: otp);
+      final token = (res['token'] ?? res['api_token'] ?? res['access_token'])?.toString();
+      if (token == null || token.isEmpty) {
+        state = state.copyWith(isLoading: false, error: 'OTP login failed');
+        return false;
+      }
+      await SecureStorage.saveToken(token);
+      final hydrated = await _api.me();
+      if (!_isCompleteSessionPayload(hydrated)) {
+        await _invalidateIncompleteSession();
+        return false;
+      }
+      final user = _userFromPayload(hydrated, fallback: _userFromPayload(res));
+      await SecureStorage.saveUser(
+        id: (user['id'] ?? 0).toString(),
+        type: user['type'] ?? 'admin',
+        name: (user['name'] ?? '').toString(),
+        email: (user['email'] ?? '').toString(),
+      );
+      state = state.copyWith(
+        isLoading: false,
+        isLoggedIn: true,
+        isHydrated: true,
+        user: user,
+        subscription: hydrated['subscription'],
+        subscriptionDaysLeft: hydrated['subscription_days_left'] == null ? null : int.tryParse(hydrated['subscription_days_left'].toString()),
+        subscriptionExpired: hydrated['subscription_expired'] == true,
+        error: null,
+      );
+      _syncCurrentFcmToken();
+      _trackAppOpenSilently();
+      return true;
+    } catch (e) {
+      state = state.copyWith(isLoading: false, error: _friendlyError(e));
+      return false;
+    }
+  }
+
+  Future<void> _syncFcmToken(String token) async {
+    if (!state.isLoggedIn || !state.isHydrated || token.isEmpty) return;
+    final installationId = await PushNotificationService.installationId();
+    await _api.registerDeviceToken(
+      token: token,
+      platform: 'android',
+      installationId: installationId,
+    );
+  }
+
+  void _syncCurrentFcmToken() {
+    final token = PushNotificationService.token;
+    if (token != null && token.isNotEmpty) {
+      Future.microtask(() => _syncFcmToken(token));
+    }
+  }
+
   Future<void> logout() async {
+    final token = PushNotificationService.token;
+    if (token != null && token.isNotEmpty && state.isLoggedIn) {
+      try { await _api.unregisterDeviceToken(token); } catch (_) {}
+    }
     await _api.logout();
     state = AuthState(isLoggedIn: false);
   }
 
   // OTP helpers - now return exact server errors
+  Future<Map<String, dynamic>> sendLoginOtp(String phone) async {
+    return _api.sendLoginOtp(phone: phone);
+  }
+
   Future<Map<String, dynamic>> sendOtp(String phone) async {
     try {
       return await _api.sendOtp(phone: phone);

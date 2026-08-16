@@ -10,6 +10,10 @@ class MembershipController extends BaseController
 {
     public function index(Request $request): JsonResponse
     {
+        if (!$this->canPerformGymAction('plans.view')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $parentIds = $this->strictMembershipParentIds($request);
 
         $memberships = Membership::whereIn('parent_id', $parentIds)
@@ -24,7 +28,7 @@ class MembershipController extends BaseController
 
     public function store(Request $request): JsonResponse
     {
-        if (!$this->isAdmin()) return $this->error('Admin access required', 403);
+        if (!$this->canPerformGymAction('plans.create')) return $this->error('Permission denied', 403);
 
         $pid = $this->getParentId();
 
@@ -67,7 +71,7 @@ class MembershipController extends BaseController
 
     public function update(Request $request, int $id): JsonResponse
     {
-        if (!$this->isAdmin()) return $this->error('Admin access required', 403);
+        if (!$this->canPerformGymAction('plans.edit')) return $this->error('Permission denied', 403);
 
         $pid = $this->getParentId();
         $membership = Membership::where('id', $id)->where('parent_id', $pid)->first();
@@ -109,7 +113,7 @@ class MembershipController extends BaseController
 
     public function destroy(Request $request, int $id): JsonResponse
     {
-        if (!$this->isAdmin()) return $this->error('Admin access required', 403);
+        if (!$this->canPerformGymAction('plans.delete')) return $this->error('Permission denied', 403);
 
         $pid = $this->getParentId();
         $membership = Membership::where('id', $id)->where('parent_id', $pid)->first();

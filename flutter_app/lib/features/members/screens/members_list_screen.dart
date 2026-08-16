@@ -1,3 +1,4 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:gymxbook/core/widgets/ui.dart';
@@ -7,6 +8,7 @@ import 'package:gymxbook/core/providers/permission_provider.dart';
 import 'member_detail_screen.dart';
 import 'add_member_screen.dart';
 
+// Scroll-linked Add Member FAB animation.
 class MembersListScreen extends ConsumerStatefulWidget {
   const MembersListScreen({super.key});
   @override
@@ -16,6 +18,8 @@ class MembersListScreen extends ConsumerStatefulWidget {
 class _MembersListScreenState extends ConsumerState<MembersListScreen> {
   final _searchCtrl = TextEditingController();
   final _scrollCtrl = ScrollController();
+  int? _openingMemberId;
+  double _addFabCollapse = 0;
 
   @override
   void initState() {
@@ -27,6 +31,8 @@ class _MembersListScreenState extends ConsumerState<MembersListScreen> {
   void _onScroll() {
     if (!_scrollCtrl.hasClients) return;
     final position = _scrollCtrl.position;
+    final collapse = (position.pixels / 140).clamp(0.0, 1.0);
+    if ((collapse - _addFabCollapse).abs() > 0.01) setState(() => _addFabCollapse = collapse);
     if (position.pixels >= position.maxScrollExtent - 280) {
       ref.read(membersProvider.notifier).loadMore();
     }
@@ -133,14 +139,36 @@ class _MembersListScreenState extends ConsumerState<MembersListScreen> {
                                 }
                                 final m = state.members[i];
                                 final c = AppTheme.expiryColors(m.daysLeft, Theme.of(context).brightness);
+                                final location = (m.address ?? '').trim().isNotEmpty
+                                    ? m.address!.trim()
+                                    : (m.city ?? '').trim();
+                                final contactLine = [
+                                  if (m.phone.isNotEmpty) m.phone,
+                                  if (location.isNotEmpty) location,
+                                ].join(' | ');
                                 return FadeInUp(
                                   delayMs: (i * 22).clamp(0, 260),
                                   offset: 10,
                                   child: SurfaceCard(
                                     padding: const EdgeInsets.all(12),
-                                    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => MemberDetailScreen(memberId: m.id, memberName: m.name))),
+                                    onTap: _openingMemberId != null
+                                        ? null
+                                        : () async {
+                                            setState(() => _openingMemberId = m.id);
+                                            await Navigator.push(context, MaterialPageRoute(builder: (_) => MemberDetailScreen(memberId: m.id, memberName: m.name)));
+                                            if (!mounted) return;
+                                            setState(() => _openingMemberId = null);
+                                            ref.read(membersProvider.notifier).load(search: _searchCtrl.text, status: state.statusFilter);
+                                          },
                                     child: Row(children: [
-                                      GxAvatar(name: m.name, size: 50),
+                                      Pressable(
+                                        radius: 18,
+                                        onTap: () => _showProfilePhotoViewer(m.profilePhotoUrl ?? '', m.id),
+                                        child: Hero(
+                                          tag: 'member-photo-${m.id}',
+                                          child: GxAvatar(name: m.name, imageUrl: m.profilePhotoUrl, size: 62),
+                                        ),
+                                      ),
                                       const SizedBox(width: 13),
                                       Expanded(
                                         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -154,7 +182,7 @@ class _MembersListScreenState extends ConsumerState<MembersListScreen> {
                                             ],
                                           ]),
                                           const SizedBox(height: 3),
-                                          Text(m.phone.isNotEmpty ? m.phone : m.email, style: context.typo.bodySmall?.copyWith(color: context.tokens.textTertiary)),
+                                          Text(contactLine.isNotEmpty ? contactLine : m.email, style: context.typo.bodySmall?.copyWith(color: context.tokens.textTertiary)),
                                           const SizedBox(height: 8),
                                           Wrap(spacing: 6, runSpacing: 4, children: [
                                             Container(
@@ -166,15 +194,12 @@ class _MembersListScreenState extends ConsumerState<MembersListScreen> {
                                                 Text(m.expiryDate != null ? '${DateFormatter.formatDate(m.expiryDate)} • ${m.expiryLabel}' : 'No expiry', style: context.typo.bodySmall?.copyWith(fontSize: 11.5, fontWeight: FontWeight.w700, color: c.fg)),
                                               ]),
                                             ),
-                                            Container(
-                                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                              decoration: BoxDecoration(color: m.statusColor.withOpacity(0.12), borderRadius: BorderRadius.circular(8)),
-                                              child: Text(m.statusLabel, style: context.typo.bodySmall?.copyWith(fontSize: 10.5, fontWeight: FontWeight.w700, color: m.statusColor)),
-                                            ),
                                           ]),
                                         ]),
                                       ),
-                                      Icon(Icons.chevron_right_rounded, size: 20, color: context.tokens.textTertiary),
+                                      _openingMemberId == m.id
+                                          ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2.2, color: AppTheme.brand))
+                                          : Icon(Icons.chevron_right_rounded, size: 20, color: context.tokens.textTertiary),
                                     ]),
                                   ),
                                 );
@@ -186,13 +211,42 @@ class _MembersListScreenState extends ConsumerState<MembersListScreen> {
       ),
       floatingActionButtonLocation: const AboveNavFabLocation(),
       floatingActionButton: canCreate
-          ? FloatingActionButton.extended(
-              onPressed: _addMember,
-              icon: const Icon(Icons.person_add_rounded),
-              label: const Text('Add Member', style: TextStyle(fontWeight: FontWeight.w700)),
-              backgroundColor: AppTheme.brand,
-            )
+          ? SizedBox(width: lerpDouble(56, 168, 1 - _addFabCollapse)!, height: 56, child: FloatingActionButton(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)), onPressed: _addMember, backgroundColor: AppTheme.brand, child: ClipRect(child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [const Icon(Icons.person_add_rounded), if (_addFabCollapse < 0.99) ...[SizedBox(width: 8 * (1 - _addFabCollapse)), Opacity(opacity: 1 - _addFabCollapse, child: const Text('Add Member', maxLines: 1, style: TextStyle(fontWeight: FontWeight.w700)))]]))))
           : null,
+    );
+  }
+
+  void _showProfilePhotoViewer(String imageUrl, int memberId) {
+    if (imageUrl.trim().isEmpty) return;
+    showGeneralDialog(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'Close profile photo',
+      barrierColor: Colors.black.withOpacity(.34),
+      pageBuilder: (_, __, ___) => BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+        child: GestureDetector(
+          onTap: () => Navigator.of(context).pop(),
+          child: SafeArea(
+            child: Center(
+              child: Hero(
+                tag: 'member-photo-$memberId',
+                child: FractionallySizedBox(
+                  widthFactor: .78,
+                  heightFactor: .72,
+                  child: InteractiveViewer(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(22),
+                      child: Image.network(imageUrl, fit: BoxFit.contain),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+      transitionBuilder: (_, animation, __, child) => FadeTransition(opacity: animation, child: ScaleTransition(scale: Tween<double>(begin: .72, end: 1).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic)), child: child)),
     );
   }
 

@@ -45,6 +45,18 @@
             <h4 class="text-center mb-1">{{ $gymName }}</h4>
             <p class="text-center text-muted mb-3">{{ $gym->email }}</p>
 
+            <form action="{{ route('admin.gyms.updateAcquisition', $gym->id) }}" method="POST" class="border rounded-3 p-3 mb-3 text-start">
+                @csrf
+                <div class="small text-muted mb-2"><i class="bi bi-megaphone me-1"></i> How they found GymXBook</div>
+                <select name="acquisition_source" class="form-select form-select-sm mb-2">
+                    @foreach(['google_search'=>'Google Search','play_store'=>'Google Play Store','social_media'=>'Instagram / Facebook','youtube'=>'YouTube','chatgpt_ai'=>'ChatGPT / AI','referral'=>'Friend / Gym Owner Referral','sales_team'=>'GymXBook Team / Sales Person','other'=>'Other','super_admin'=>'Super Admin'] as $key => $label)
+                        <option value="{{ $key }}" {{ ($gym->acquisition_source ?? 'other') === $key ? 'selected' : '' }}>{{ $label }}</option>
+                    @endforeach
+                </select>
+                <input name="acquisition_detail" class="form-control form-control-sm mb-2" value="{{ $gym->acquisition_detail }}" placeholder="Referral, campaign or source detail">
+                <button type="submit" class="btn btn-sm btn-outline-primary w-100">Save Acquisition</button>
+            </form>
+
             <div class="text-center mb-4">
                 @if($gym->is_active)
                     <span class="badge bg-success fs-6 px-3 py-2">✅ Active</span>
@@ -102,9 +114,11 @@
                     </button>
                 </form>
 
-                <button class="btn btn-outline-danger w-100" onclick="confirmDelete('{{ route('admin.gyms.destroy', $gym->id) }}', 'This will permanently delete {{ $gymName }} and ALL related data ({{ $memberCount }} members, {{ $invoiceCount }} invoices). This cannot be undone!')">
-                    <i class="bi bi-trash3 me-2"></i> Delete Gym Permanently
-                </button>
+                @if(\App\Support\PlatformOperationMode::isDebug())
+                    <button class="btn btn-outline-danger w-100" data-bs-toggle="modal" data-bs-target="#deleteGymModal">
+                        <i class="bi bi-trash3 me-2"></i> Delete Gym Permanently
+                    </button>
+                @endif
             </div>
         </div>
 
@@ -365,7 +379,44 @@
         </div>
     </div>
 </div>
-@endsection
+@if(\App\Support\PlatformOperationMode::isDebug())
+<div class="modal fade" id="deleteGymModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content border-danger">
+            <div class="modal-header"><h5 class="modal-title text-danger">Delete {{ $gymName }}</h5><button class="btn-close" data-bs-dismiss="modal"></button></div>
+            <div class="modal-body">
+                <div class="alert alert-danger">This permanently deletes the gym and all related members, invoices, transactions, attendance, products and settings.</div>
+                <button id="sendDeleteGymOtp" class="btn btn-outline-danger w-100" type="button">Send WhatsApp Confirmation Code</button>
+                <div id="deleteGymOtpArea" class="d-none mt-3"><label class="form-label">6-digit WhatsApp confirmation code</label><input id="deleteGymOtp" class="form-control" maxlength="6" inputmode="numeric"><div id="deleteGymError" class="text-danger small mt-2 d-none"></div></div>
+            </div>
+            <div class="modal-footer"><button class="btn btn-light" data-bs-dismiss="modal">Cancel</button><button id="confirmDeleteGym" class="btn btn-danger d-none" type="button">Delete Gym Permanently</button></div>
+        </div>
+    </div>
+</div>
+
+@push('scripts')
+<script>
+const gymCsrf = document.querySelector('meta[name="csrf-token"]').content;
+const deleteError = document.getElementById('deleteGymError');
+document.getElementById('sendDeleteGymOtp')?.addEventListener('click', async function () {
+    const button = this; button.disabled = true; button.textContent = 'Sending...';
+    const res = await fetch('{{ route('admin.gyms.deleteOtp', $gym->id) }}', {method:'POST', headers:{'X-CSRF-TOKEN':gymCsrf,'Accept':'application/json'}});
+    const data = await res.json();
+    if (!data.success) { button.disabled = false; button.textContent = 'Send WhatsApp Confirmation Code'; deleteError.textContent = data.error || 'Could not send code'; deleteError.classList.remove('d-none'); return; }
+    document.getElementById('deleteGymOtpArea').classList.remove('d-none');
+    document.getElementById('confirmDeleteGym').classList.remove('d-none');
+    button.textContent = 'Code Sent';
+});
+document.getElementById('confirmDeleteGym')?.addEventListener('click', async function () {
+    const code = document.getElementById('deleteGymOtp').value;
+    const res = await fetch('{{ route('admin.gyms.destroy', $gym->id) }}', {method:'DELETE', headers:{'X-CSRF-TOKEN':gymCsrf,'Accept':'application/json','Content-Type':'application/json'}, body:JSON.stringify({delete_otp:code})});
+    const data = await res.json();
+    if (!data.success) { deleteError.textContent = data.error || 'Could not delete gym'; deleteError.classList.remove('d-none'); return; }
+    window.location.href = '{{ route('admin.gyms.index') }}';
+});
+</script>
+@endpush
+@endif
 
 @push('scripts')
 <script>
@@ -459,3 +510,4 @@
 })();
 </script>
 @endpush
+@endsection

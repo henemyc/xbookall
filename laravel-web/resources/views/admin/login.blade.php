@@ -313,8 +313,8 @@
 
                         <div id="otpStep" style="display:none;">
                             <div class="otp-info">
-                                <strong><i class="bi bi-whatsapp me-1"></i>WhatsApp OTP verification</strong><br>
-                                Enter the 6-digit OTP sent to your registered WhatsApp. The code expires in 5 minutes.
+                                <strong id="otpMethodTitle"><i class="bi bi-whatsapp me-1"></i>WhatsApp OTP verification</strong><br>
+                                <span id="otpMethodDescription">Enter the 6-digit OTP sent to your registered WhatsApp. The code expires in 5 minutes.</span>
                             </div>
                             <div class="form-floating">
                                 <input type="text" name="otp" id="otp" class="form-control" placeholder="123456" maxlength="6" inputmode="numeric" autocomplete="one-time-code">
@@ -368,9 +368,10 @@
         const loginTitle = document.getElementById('loginTitle');
         const loginSubtitle = document.getElementById('loginSubtitle');
         let twoFaMode = false;
+        let twoFactorMethod = 'whatsapp';
 
         function buttonLabel() {
-            return twoFaMode ? 'Verify OTP' : 'Sign In';
+            return twoFaMode ? (twoFactorMethod === 'google_authenticator' ? 'Verify Authenticator Code' : 'Verify OTP') : 'Sign In';
         }
 
         function renderButton(isLoading) {
@@ -412,14 +413,23 @@
 
                 if (res.ok && data.success && data.requires_2fa) {
                     twoFaMode = true;
+                    twoFactorMethod = data.two_factor_method || 'whatsapp';
                     document.getElementById('passwordStep').style.display = 'none';
                     document.getElementById('otpStep').style.display = 'block';
                     document.getElementById('email').readOnly = true;
-                    loginTitle.textContent = 'Verify OTP';
-                    loginSubtitle.textContent = 'A WhatsApp verification code was sent to your registered WhatsApp.';
+                    loginTitle.textContent = twoFactorMethod === 'google_authenticator' ? 'Google Authenticator' : 'Verify OTP';
+                    loginSubtitle.textContent = twoFactorMethod === 'google_authenticator'
+                        ? 'Enter the current 6-digit code from Google Authenticator.'
+                        : 'A WhatsApp verification code was sent to your registered WhatsApp.';
+                    document.getElementById('otpMethodTitle').innerHTML = twoFactorMethod === 'google_authenticator'
+                        ? '<i class="bi bi-google me-1"></i>Google Authenticator verification'
+                        : '<i class="bi bi-whatsapp me-1"></i>WhatsApp OTP verification';
+                    document.getElementById('otpMethodDescription').textContent = twoFactorMethod === 'google_authenticator'
+                        ? 'Enter the current 6-digit code from your authenticator app. Codes refresh every 30 seconds.'
+                        : 'Enter the 6-digit OTP sent to your registered WhatsApp. The code expires in 5 minutes.';
                     document.getElementById('otp').focus();
                     setLoading(false);
-                    showToast(data.message || 'OTP sent to WhatsApp.', 'success');
+                    if (twoFactorMethod !== 'google_authenticator') showToast(data.message || 'OTP sent to WhatsApp.', 'success');
                 } else if (res.ok && data.success) {
                     window.location.href = data.redirect || '/admin';
                 } else {
@@ -441,6 +451,8 @@
             document.getElementById('otp').value = '';
             loginTitle.textContent = 'Welcome back';
             loginSubtitle.textContent = 'Sign in to manage the GymXBook platform. WhatsApp OTP will be requested if 2FA is enabled.';
+            document.getElementById('otpMethodTitle').innerHTML = '<i class="bi bi-whatsapp me-1"></i>WhatsApp OTP verification';
+            document.getElementById('otpMethodDescription').textContent = 'Enter the 6-digit OTP sent to your registered WhatsApp. The code expires in 5 minutes.';
             setLoading(false);
             document.getElementById('password').focus();
         }

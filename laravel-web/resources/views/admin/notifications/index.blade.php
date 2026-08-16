@@ -101,10 +101,20 @@
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
-                    <div class="alert alert-info">
+                    <div class="alert alert-info small">
                         <i class="bi bi-info-circle me-2"></i>
-                        This will send a notification to ALL active gyms.
+                        Leave all gyms unselected to send to every active gym. Select one or more gyms for a targeted notification.
                     </div>
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <label class="form-label mb-0">Recipients</label>
+                        <div><button class="btn btn-link btn-sm p-0 me-3" type="button" id="selectAllGyms">Select All</button><button class="btn btn-link btn-sm p-0" type="button" id="clearAllGyms">Clear</button></div>
+                    </div>
+                    <select name="gym_ids[]" id="notificationGymIds" class="form-select" multiple size="7">
+                        @foreach($gyms as $gym)
+                            <option value="{{ $gym->id }}">{{ $gym->name }} — {{ $gym->email }}</option>
+                        @endforeach
+                    </select>
+                    <div class="form-text"><span id="notificationRecipientCount">All {{ $gyms->count() }}</span> active gyms will receive this notification.</div>
                     <div class="mb-3">
                         <label class="form-label">Title</label>
                         <input type="text" name="title" class="form-control" required>
@@ -133,4 +143,19 @@
         </div>
     </div>
 </div>
+
+@push('scripts')
+<script>
+const gymSelect = document.getElementById('notificationGymIds');
+const recipientCount = document.getElementById('notificationRecipientCount');
+function updateRecipientCount() {
+    if (!gymSelect || !recipientCount) return;
+    const selected = Array.from(gymSelect.selectedOptions).length;
+    recipientCount.textContent = selected ? selected : 'All {{ $gyms->count() }}';
+}
+document.getElementById('selectAllGyms')?.addEventListener('click', () => { Array.from(gymSelect.options).forEach(option => option.selected = true); updateRecipientCount(); });
+document.getElementById('clearAllGyms')?.addEventListener('click', () => { Array.from(gymSelect.options).forEach(option => option.selected = false); updateRecipientCount(); });
+gymSelect?.addEventListener('change', updateRecipientCount);
+</script>
+@endpush
 @endsection

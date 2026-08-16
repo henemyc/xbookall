@@ -3,8 +3,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:gymxbook/core/widgets/ui.dart';
 import 'package:gymxbook/features/auth/providers/auth_provider.dart';
+import 'package:gymxbook/core/providers/permission_provider.dart';
 import 'package:gymxbook/core/utils/date_formatter.dart';
 
+// Phase 3: staff event actions use the shared permission provider.
 class EventsScreen extends ConsumerStatefulWidget {
   const EventsScreen({super.key});
   @override
@@ -35,6 +37,9 @@ class _EventsScreenState extends ConsumerState<EventsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final permissions = ref.watch(permissionProvider);
+    final canCreate = permissions.can('events.create');
+    final canDelete = permissions.can('events.delete');
     return Scaffold(
       appBar: AppBar(title: const Text('Events')),
       body: loading
@@ -42,7 +47,7 @@ class _EventsScreenState extends ConsumerState<EventsScreen> {
           : error != null
               ? ErrorRetry(message: error!, onRetry: _load)
               : events.isEmpty
-                  ? EmptyState(icon: Icons.event_rounded, title: 'No events', subtitle: 'Create events for your gym', actionLabel: 'Add Event', onAction: _showAddSheet)
+                  ? EmptyState(icon: Icons.event_rounded, title: 'No events', subtitle: canCreate ? 'Create events for your gym' : 'No events available for your role', actionLabel: canCreate ? 'Add Event' : null, onAction: canCreate ? _showAddSheet : null)
                   : RefreshIndicator(
                       color: AppTheme.brand,
                       onRefresh: _load,
@@ -68,7 +73,7 @@ class _EventsScreenState extends ConsumerState<EventsScreen> {
                                     if (ev['type_name'] != null && ev['type_name'].toString().isNotEmpty)
                                       Text(ev['type_name'], style: context.typo.bodySmall?.copyWith(color: color, fontWeight: FontWeight.w600)),
                                   ])),
-                                  IconButton(
+                                  if (canDelete) IconButton(
                                     icon: Icon(Icons.delete_outline_rounded, size: 20, color: AppTheme.danger.withOpacity(0.7)),
                                     onPressed: () => _delete(ev),
                                     tooltip: 'Delete',
@@ -98,12 +103,12 @@ class _EventsScreenState extends ConsumerState<EventsScreen> {
                       ),
                     ),
       floatingActionButtonLocation: const AboveNavFabLocation(),
-      floatingActionButton: FloatingActionButton.extended(
+      floatingActionButton: canCreate ? FloatingActionButton.extended(
         onPressed: _showAddSheet,
         icon: const Icon(Icons.add_rounded),
         label: const Text('Add Event', style: TextStyle(fontWeight: FontWeight.w700)),
         backgroundColor: AppTheme.brand,
-      ),
+      ) : null,
     );
   }
 

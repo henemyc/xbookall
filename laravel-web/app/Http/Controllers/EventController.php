@@ -9,11 +9,16 @@ use Illuminate\Http\JsonResponse;
 
 class EventController extends BaseController
 {
+    // Phase 3: event actions below require their exact event permission.
     /**
      * List events
      */
     public function index(Request $request): JsonResponse
     {
+        if (!$this->canPerformGymAction('events.view')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $parentIds = $this->getGymParentIds();
 
         $events = Event::whereIn('parent_id', $parentIds)
@@ -29,6 +34,10 @@ class EventController extends BaseController
      */
     public function store(Request $request): JsonResponse
     {
+        if (!$this->canPerformGymAction('events.create')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $pid = $this->getParentId();
         $parentIds = $this->getGymParentIds();
 
@@ -59,6 +68,10 @@ class EventController extends BaseController
      */
     public function update(Request $request, int $id): JsonResponse
     {
+        if (!$this->canPerformGymAction('events.edit')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $parentIds = $this->getGymParentIds();
 
         $event = Event::where('id', $id)->whereIn('parent_id', $parentIds)->first();
@@ -83,6 +96,10 @@ class EventController extends BaseController
      */
     public function destroy(int $id): JsonResponse
     {
+        if (!$this->canPerformGymAction('events.delete')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $parentIds = $this->getGymParentIds();
 
         $event = Event::where('id', $id)->whereIn('parent_id', $parentIds)->first();
@@ -100,6 +117,10 @@ class EventController extends BaseController
      */
     public function types(Request $request): JsonResponse
     {
+        if (!$this->canPerformGymAction('events.view')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $parentIds = $this->getGymAndGlobalParentIds();
 
         $types = EventType::whereIn('parent_id', $parentIds)
@@ -114,6 +135,10 @@ class EventController extends BaseController
      */
     public function storeType(Request $request): JsonResponse
     {
+        if (!$this->canPerformGymAction('events.create')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $pid = $this->getParentId();
         $parentIds = $this->getGymParentIds();
 

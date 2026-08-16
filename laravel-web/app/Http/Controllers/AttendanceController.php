@@ -12,8 +12,13 @@ use Illuminate\Support\Facades\DB;
 
 class AttendanceController extends BaseController
 {
+    // Phase 3: staff search/calendar reads require attendance.view.
     public function index(Request $request): JsonResponse
     {
+        if ($this->isStaff() && !$this->hasStaffPermission('attendance.view')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $parentIds = $this->getGymParentIds();
         $user = $this->currentUser();
         $today = now('Asia/Kolkata')->toDateString();
@@ -46,11 +51,18 @@ class AttendanceController extends BaseController
 
     public function store(Request $request): JsonResponse
     {
+        if ($this->isStaff() && !$this->hasStaffPermission('attendance.mark')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $user = $this->currentUser();
         $parentIds = $this->getGymParentIds();
         $pid = $this->getParentId();
         $userId = $request->user_id ?? ($user ? $user->id : 0);
         $type = $request->type ?? 'checkin';
+        if (!$userId || !User::where('id', $userId)->where('type', 'trainee')->whereIn('parent_id', $parentIds)->exists()) {
+            return $this->error('Member not found for this gym', 404);
+        }
         $today = now('Asia/Kolkata')->toDateString();
         $currentTime = now('Asia/Kolkata')->format('H:i:s');
 
@@ -105,6 +117,10 @@ class AttendanceController extends BaseController
 
     public function update(Request $request, int $id): JsonResponse
     {
+        if ($this->isStaff() && !$this->hasStaffPermission('attendance.edit')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $parentIds = $this->getGymParentIds();
 
         $attendance = Attendance::where('id', $id)
@@ -137,6 +153,10 @@ class AttendanceController extends BaseController
 
     public function destroy(int $id): JsonResponse
     {
+        if ($this->isStaff() && !$this->hasStaffPermission('attendance.delete')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $parentIds = $this->getGymParentIds();
 
         $attendance = Attendance::where('id', $id)
@@ -173,6 +193,9 @@ class AttendanceController extends BaseController
         if (!$user) {
             return $this->error('Authentication required', 401);
         }
+        if ($user->type === 'staff' && !$user->hasStaffPermission('attendance.mark')) {
+            return $this->error('Permission denied', 403);
+        }
 
         $pid = $this->getParentId();
         $today = now('Asia/Kolkata')->toDateString();
@@ -192,6 +215,10 @@ class AttendanceController extends BaseController
 
         $userId = (int) ($request->input('user_id') ?: $user->id);
         $type = $request->input('type', 'checkin');
+
+        if ($user->type !== 'trainee' && !User::where('id', $userId)->where('type', 'trainee')->where('parent_id', $pid)->exists()) {
+            return $this->error('Member not found for this gym', 404);
+        }
 
         // Members can only mark their own attendance and cannot enter with
         // inactive/expired memberships. Expiry date itself is still valid.
@@ -305,6 +332,10 @@ class AttendanceController extends BaseController
 
     public function search(Request $request): JsonResponse
     {
+        if ($this->isStaff() && !$this->hasAnyStaffPermission(['attendance.view', 'lockers.assign'])) {
+            return $this->error('Permission denied', 403);
+        }
+
         $parentIds = $this->getGymParentIds();
         $q = trim($request->get('q', ''));
 
@@ -355,6 +386,10 @@ class AttendanceController extends BaseController
 
     public function calendar(Request $request): JsonResponse
     {
+        if ($this->isStaff() && !$this->hasStaffPermission('attendance.view')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $parentIds = $this->getGymParentIds();
         $istNow = now('Asia/Kolkata');
         $month = intval($request->get('month', $istNow->month));

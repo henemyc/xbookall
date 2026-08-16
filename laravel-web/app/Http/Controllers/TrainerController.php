@@ -14,6 +14,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Database\Schema\Blueprint;
+use App\Services\PhoneIdentityService;
 
 class TrainerController extends BaseController
 {
@@ -21,7 +22,7 @@ class TrainerController extends BaseController
 
     public function index(Request $request): JsonResponse
     {
-        if (!$this->isAdmin()) return $this->error('Admin access required', 403);
+        if (!$this->canPerformGymAction('trainers.view')) return $this->error('Permission denied', 403);
         if (!$this->planFeatureEnabled('trainers_enabled', true)) {
             return $this->error(\App\Services\SubscriptionFeatureService::featureLockedMessage('Trainer management'), 402);
         }
@@ -64,7 +65,7 @@ class TrainerController extends BaseController
 
     public function show(int $id): JsonResponse
     {
-        if (!$this->isAdmin()) return $this->error('Admin access required', 403);
+        if (!$this->canPerformGymAction('trainers.view')) return $this->error('Permission denied', 403);
         if (!$this->planFeatureEnabled('trainers_enabled', true)) {
             return $this->error(\App\Services\SubscriptionFeatureService::featureLockedMessage('Trainer management'), 402);
         }
@@ -146,7 +147,7 @@ class TrainerController extends BaseController
 
     public function store(Request $request): JsonResponse
     {
-        if (!$this->isAdmin()) return $this->error('Admin access required', 403);
+        if (!$this->canPerformGymAction('trainers.create')) return $this->error('Permission denied', 403);
         $pid = $this->getParentId();
         if (!$this->planFeatureEnabled('trainers_enabled', true)) {
             return $this->error(\App\Services\SubscriptionFeatureService::featureLockedMessage('Trainer management'), 402);
@@ -174,17 +175,10 @@ class TrainerController extends BaseController
             'emergency_contact' => 'nullable|string|max:30',
         ]);
 
-        $phoneDigits = $this->normalizePhone($data['phone_number']);
-        if (!$phoneDigits) {
-            return $this->error('Phone must be 10 digits, starting with 6-9', 400);
-        }
-
-        $phoneExists = User::where('type', 'trainer')
-            ->where('parent_id', $pid)
-            ->where('phone_number', $phoneDigits)
-            ->exists();
-        if ($phoneExists) {
-            return $this->error('A trainer with this phone number already exists', 400);
+        try {
+            $phoneDigits = app(PhoneIdentityService::class)->requireAvailable($data['phone_number']);
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 400);
         }
 
         $email = trim($data['email'] ?? '');
@@ -238,7 +232,7 @@ class TrainerController extends BaseController
 
     public function update(Request $request, int $id): JsonResponse
     {
-        if (!$this->isAdmin()) return $this->error('Admin access required', 403);
+        if (!$this->canPerformGymAction('trainers.edit')) return $this->error('Permission denied', 403);
         $pid = $this->getParentId();
         $parentIds = $this->getGymParentIds();
         $this->ensureTrainerDetailColumns();
@@ -267,15 +261,11 @@ class TrainerController extends BaseController
             'emergency_contact' => 'nullable|string|max:30',
         ]);
 
-        $phoneDigits = $this->normalizePhone($data['phone_number']);
-        if (!$phoneDigits) return $this->error('Phone must be 10 digits, starting with 6-9', 400);
-
-        $phoneExists = User::where('type', 'trainer')
-            ->where('parent_id', $pid)
-            ->where('phone_number', $phoneDigits)
-            ->where('id', '!=', $trainer->id)
-            ->exists();
-        if ($phoneExists) return $this->error('A trainer with this phone number already exists', 400);
+        try {
+            $phoneDigits = app(PhoneIdentityService::class)->requireAvailable($data['phone_number'], (int) $trainer->id);
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 400);
+        }
 
         $email = trim($data['email'] ?? '');
         if ($email !== '' && User::where('email', $email)->where('id', '!=', $trainer->id)->exists()) {
@@ -311,7 +301,7 @@ class TrainerController extends BaseController
 
     public function toggle(int $id): JsonResponse
     {
-        if (!$this->isAdmin()) return $this->error('Admin access required', 403);
+        if (!$this->canPerformGymAction('trainers.edit')) return $this->error('Permission denied', 403);
         $parentIds = $this->getGymParentIds();
         $trainer = User::where('id', $id)
             ->where('type', 'trainer')
@@ -331,7 +321,7 @@ class TrainerController extends BaseController
 
     public function destroy(int $id): JsonResponse
     {
-        if (!$this->isAdmin()) return $this->error('Admin access required', 403);
+        if (!$this->canPerformGymAction('trainers.delete')) return $this->error('Permission denied', 403);
         $parentIds = $this->getGymParentIds();
         $trainer = User::where('id', $id)
             ->where('type', 'trainer')
@@ -779,4 +769,5 @@ class TrainerController extends BaseController
             }
         }
     }
+}
 }

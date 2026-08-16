@@ -19,6 +19,7 @@ use App\Http\Controllers\Panel\PanelSettingsController;
 use App\Http\Controllers\Panel\PanelTransactionController;
 use App\Http\Controllers\Panel\PanelQRController;
 use App\Http\Controllers\Panel\PanelWorkoutController;
+use App\Http\Controllers\Panel\PanelDietController;
 use App\Http\Controllers\Panel\PanelStaffRoleController;
 use App\Http\Controllers\Panel\PanelStaffUserController;
 use App\Http\Controllers\Panel\PanelStaffActivityController;
@@ -182,6 +183,12 @@ Route::middleware(['panel'])->group(function () {
     // QR Code
     Route::get('/qr', [PanelQRController::class, 'index'])->middleware('staff.permission:attendance.qr')->name('panel.qr.index');
 
+    // Diet Templates — Gym Owner/Admin only (controller also enforces this).
+    Route::get('/diets', [PanelDietController::class, 'index'])->name('panel.diets.index');
+    Route::post('/diets', [PanelDietController::class, 'store'])->name('panel.diets.store');
+    Route::put('/diets/{id}', [PanelDietController::class, 'update'])->name('panel.diets.update');
+    Route::delete('/diets/{id}', [PanelDietController::class, 'destroy'])->name('panel.diets.destroy');
+
     // Workouts
     Route::post('/workouts', [PanelWorkoutController::class, 'store'])->middleware('staff.permission:workouts.create')->name('panel.workouts.store');
     Route::put('/workouts/{id}', [PanelWorkoutController::class, 'update'])->middleware('staff.permission:workouts.edit')->name('panel.workouts.update');
@@ -191,9 +198,11 @@ Route::middleware(['panel'])->group(function () {
     Route::put('/workouts/activities/{id}', [PanelWorkoutController::class, 'updateActivity'])->middleware('staff.permission:workouts.edit')->name('panel.workouts.updateActivity');
     Route::delete('/workouts/activities/{id}', [PanelWorkoutController::class, 'destroyActivity'])->middleware('staff.permission:workouts.delete')->name('panel.workouts.destroyActivity');
 
-    // Settings
-    Route::get('/settings', [PanelSettingsController::class, 'index'])->middleware('staff.permission:settings.view')->name('panel.settings.index');
-    Route::post('/settings/profile', [PanelSettingsController::class, 'updateProfile'])->middleware('staff.permission:settings.edit')->name('panel.settings.updateProfile');
-    Route::post('/settings/personal', [PanelSettingsController::class, 'updatePersonalProfile'])->middleware('staff.permission:settings.edit')->name('panel.settings.updatePersonalProfile');
-    Route::post('/settings/password', [PanelSettingsController::class, 'updatePassword'])->middleware('staff.permission:settings.edit')->name('panel.settings.updatePassword');
+    // Settings: every authenticated panel user may manage their own profile
+    // and password. Gym/business profile writes are owner-only in the
+    // controller as a direct-request defense.
+    Route::get('/settings', [PanelSettingsController::class, 'index'])->name('panel.settings.index');
+    Route::post('/settings/profile', [PanelSettingsController::class, 'updateProfile'])->name('panel.settings.updateProfile');
+    Route::post('/settings/personal', [PanelSettingsController::class, 'updatePersonalProfile'])->name('panel.settings.updatePersonalProfile');
+    Route::post('/settings/password', [PanelSettingsController::class, 'updatePassword'])->name('panel.settings.updatePassword');
 });

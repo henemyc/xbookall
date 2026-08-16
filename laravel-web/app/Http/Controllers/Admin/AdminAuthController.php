@@ -8,9 +8,11 @@ use App\Models\Subscription;
 use App\Models\SubscriptionOrder;
 use App\Models\Setting;
 use App\Services\WhatsAppService;
+use App\Services\GoogleAuthenticatorService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Crypt;
 
 class AdminAuthController extends BaseController
 {
@@ -52,7 +54,21 @@ class AdminAuthController extends BaseController
             return back()->withErrors(['email' => 'Invalid email or password.'])->withInput();
         }
 
-        // Super Admin WhatsApp 2FA (optional, controlled from Super Admin settings)
+        // Google Authenticator is primary. Fail closed: if the platform setting
+        // says it is enabled but the secret is missing, never permit direct login.
+        if ($this->requiresGoogleAuthenticator($user)) {
+            if (empty($user->twofa_secret)) {
+                return response()->json(['success' => false, 'error' => 'Google Authenticator is enabled but not configured. Disable it in Settings or complete setup.'], 422);
+            }
+            session([
+                'admin_google_2fa_user_id' => $user->id,
+                'admin_google_2fa_expires_at' => now()->addMinutes(5)->toDateTimeString(),
+                'admin_google_2fa_attempts' => 0,
+            ]);
+            return response()->json(['success' => true, 'requires_2fa' => true, 'two_factor_method' => 'google_authenticator']);
+        }
+
+        // Super Admin WhatsApp 2FA fallback (optional).
         if ($this->isTwoFactorEnabled()) {
             $otpResult = $this->sendTwoFactorOtp($request, $user);
             if (!$otpResult['success']) {
@@ -83,7 +99,25 @@ class AdminAuthController extends BaseController
     {
         $otp = trim((string) $request->input('otp', ''));
         if (!preg_match('/^[0-9]{6}$/', $otp)) {
-            return $this->twoFactorError($request, 'Enter the 6-digit OTP.', 422);
+            return $this->twoFactorError($request, 'Enter the 6-digit code.', 422);
+        }
+
+        $googleAdminId = (int) session('admin_google_2fa_user_id', 0);
+        if ($googleAdminId) {
+            $expires = session('admin_google_2fa_expires_at');
+            $attempts = (int) session('admin_google_2fa_attempts', 0);
+            if (!$expires || now()->greaterThan(\Carbon\Carbon::parse($expires)) || $attempts >= 5) {
+                $this->clearGoogleTwoFactorSession();
+                return $this->twoFactorError($request, 'Authenticator session expired. Please login again.', 401);
+            }
+            session(['admin_google_2fa_attempts' => $attempts + 1]);
+            $user = User::where('id', $googleAdminId)->where('type', 'super_admin')->first();
+            try { $secret = $user ? Crypt::decryptString((string) $user->twofa_secret) : ''; } catch (\Throwable $e) { $secret = ''; }
+            if (!$user || !$secret || !app(GoogleAuthenticatorService::class)->verify($secret, $otp)) {
+                return $this->twoFactorError($request, 'Invalid Google Authenticator code.', 401);
+            }
+            $this->clearGoogleTwoFactorSession();
+            return $this->completeLogin($request, $user);
         }
 
         $adminId = (int) session('admin_2fa_user_id', 0);
@@ -146,6 +180,14 @@ class AdminAuthController extends BaseController
         return redirect()->route('admin.dashboard');
     }
 
+    private function requiresGoogleAuthenticator(User $user): bool
+    {
+        // Either source means Google 2FA was intentionally enabled. This fails
+        // closed if settings and user secret ever become inconsistent.
+        return Setting::getValue('super_admin_google_auth_enabled', 1, '0') === '1'
+            || !empty($user->twofa_secret);
+    }
+
     private function isTwoFactorEnabled(): bool
     {
         return Setting::getValue('super_admin_2fa_enabled', 1, '0') === '1';
@@ -191,6 +233,11 @@ class AdminAuthController extends BaseController
         session()->forget(['admin_2fa_user_id', 'admin_2fa_hash', 'admin_2fa_expires_at', 'admin_2fa_attempts']);
     }
 
+    private function clearGoogleTwoFactorSession(): void
+    {
+        session()->forget(['admin_google_2fa_user_id', 'admin_google_2fa_expires_at', 'admin_google_2fa_attempts']);
+    }
+
     private function twoFactorError(Request $request, string $message, int $status)
     {
         if ($this->isAjaxRequest($request)) {
@@ -231,6 +278,19 @@ class AdminAuthController extends BaseController
             'total_revenue' => SubscriptionOrder::where('status', 'PAID')->sum('amount'),
         ];
 
+        $acquisitionSources = User::where('type', 'admin')
+            ->selectRaw("COALESCE(NULLIF(acquisition_source, ''), 'unknown') as source, COUNT(*) as total")
+            ->groupBy('source')
+            ->orderByDesc('total')
+            ->get();
+
+        $acquisitionLabels = $acquisitionSources
+            ->map(fn ($source) => ucwords(str_replace('_', ' ', $source->source)))
+            ->values();
+        $acquisitionValues = $acquisitionSources
+            ->map(fn ($source) => (int) $source->total)
+            ->values();
+
         $recentGyms = User::where('type', 'admin')
             ->with(['subscriptionPlan', 'subscriptionTier'])
             ->orderByRaw('CASE WHEN COALESCE(last_app_opened_at, last_login_at) IS NULL THEN 1 ELSE 0 END')
@@ -245,7 +305,7 @@ class AdminAuthController extends BaseController
         $recentPayments = SubscriptionOrder::where('status', 'PAID')
             ->with(['parent', 'plan'])
             ->orderBy('updated_at', 'desc')
-            ->limit(10)
+            ->limit(5)
             ->get()
             ->each(function ($payment) {
                 if ($payment->parent) {
@@ -278,7 +338,7 @@ class AdminAuthController extends BaseController
             ];
         })->values();
 
-        return view('admin.dashboard', compact('stats', 'recentGyms', 'recentPayments', 'monthlyGyms', 'dailyGyms'));
+        return view('admin.dashboard', compact('stats', 'recentGyms', 'recentPayments', 'monthlyGyms', 'dailyGyms', 'acquisitionSources', 'acquisitionLabels', 'acquisitionValues'));
     }
 
     /**

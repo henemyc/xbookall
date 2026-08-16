@@ -15,6 +15,10 @@ class DashboardController extends BaseController
 {
     public function index(Request $request): JsonResponse
     {
+        if ($this->isStaff() && !$this->hasStaffPermission('dashboard.view')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $currentUser = $this->currentUser();
 
         if (!$currentUser) {
@@ -52,6 +56,13 @@ class DashboardController extends BaseController
             })
             ->count();
 
+        $expiringThisMonth = User::where('type', 'trainee')
+            ->whereIn('parent_id', $parentIds)
+            ->whereHas('traineeDetails', function ($q) {
+                $q->whereBetween('membership_expiry_date', [now()->startOfMonth()->toDateString(), now()->endOfMonth()->toDateString()]);
+            })
+            ->count();
+
         $revenue = InvoicePayment::whereIn('parent_id', $parentIds)
             ->whereMonth('payment_date', now()->month)
             ->whereYear('payment_date', now()->year)
@@ -76,6 +87,27 @@ class DashboardController extends BaseController
                         ? $member->traineeDetails->membership->title : 'No Plan',
                     'joined_at' => $member->created_at,
                     'created_at' => $member->created_at,
+                ];
+            });
+
+        $expiredMembers = User::where('type', 'trainee')
+            ->whereIn('parent_id', $parentIds)
+            ->whereHas('traineeDetails', function ($q) {
+                $q->whereNotNull('membership_expiry_date')
+                    ->where('membership_expiry_date', '<', now()->toDateString());
+            })
+            ->with('traineeDetails.membership')
+            ->orderByDesc('created_at')
+            ->limit(5)
+            ->get()
+            ->map(function ($member) {
+                $detail = $member->traineeDetails;
+                return [
+                    'id' => $member->id,
+                    'name' => $member->name,
+                    'plan_name' => $detail?->membership?->title ?? 'No Plan',
+                    'membership_expiry_date' => $detail?->membership_expiry_date,
+                    'joined_at' => $member->created_at,
                 ];
             });
 
@@ -112,6 +144,7 @@ class DashboardController extends BaseController
                 'members' => $memberCount,
                 'trainers' => $trainerCount,
                 'expiring_members' => $expiringCount,
+                'expiring_this_month' => $expiringThisMonth,
                 'attendance_today' => $attendanceCount,
                 'active_memberships' => $activeCount,
                 'active_members' => $activeCount,
@@ -120,6 +153,7 @@ class DashboardController extends BaseController
             ],
             'show_revenue_expense_card' => $showRevenueExpenseCard,
             'recent_members' => $recentMembers,
+            'expired_members' => $expiredMembers,
             'today_checkins' => $todayCheckins,
         ]);
     }

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:gymxbook/core/widgets/ui.dart';
 import 'package:gymxbook/features/auth/providers/auth_provider.dart';
+import 'package:gymxbook/core/providers/permission_provider.dart';
 
 class LockersScreen extends ConsumerStatefulWidget {
   const LockersScreen({super.key});
@@ -37,6 +38,10 @@ class _LockersScreenState extends ConsumerState<LockersScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final permissions = ref.watch(permissionProvider);
+    final canCreate = permissions.can('lockers.create');
+    final canAssign = permissions.can('lockers.assign');
+    final canDelete = permissions.can('lockers.delete');
     return Scaffold(
       appBar: AppBar(title: const Text('Lockers')),
       body: loading
@@ -44,7 +49,7 @@ class _LockersScreenState extends ConsumerState<LockersScreen> {
           : error != null
               ? ErrorRetry(message: error!, onRetry: _load)
               : lockers.isEmpty
-                  ? EmptyState(icon: Icons.lock_outline_rounded, title: 'No lockers', subtitle: 'Add lockers for your gym', actionLabel: 'Add Lockers', onAction: _showAddSheet)
+                  ? EmptyState(icon: Icons.lock_outline_rounded, title: 'No lockers', subtitle: canCreate ? 'Add lockers for your gym' : 'No lockers available for your role', actionLabel: canCreate ? 'Add Lockers' : null, onAction: canCreate ? _showAddSheet : null)
                   : RefreshIndicator(
                       color: AppTheme.brand,
                       onRefresh: _load,
@@ -91,14 +96,14 @@ class _LockersScreenState extends ConsumerState<LockersScreen> {
                                           Text('Assigned to $assignedTo', style: context.typo.bodySmall?.copyWith(color: context.tokens.textTertiary)),
                                       ])),
                                       StatusBadge(available ? 'FREE' : 'OCCUPIED', color: available ? AppTheme.success : AppTheme.warning),
-                                      if (!available) ...[
+                                      if (!available && canAssign) ...[
                                         const SizedBox(width: 8),
                                         IconButton(
                                           icon: const Icon(Icons.lock_open_rounded, size: 18),
                                           onPressed: () => _unassign(l),
                                           tooltip: 'Unassign',
                                         ),
-                                      ] else ...[
+                                      ] else if (available && canAssign) ...[
                                         const SizedBox(width: 8),
                                         IconButton(
                                           icon: Icon(Icons.person_add_rounded, size: 18, color: AppTheme.brand),
@@ -116,12 +121,12 @@ class _LockersScreenState extends ConsumerState<LockersScreen> {
                       ),
                     ),
       floatingActionButtonLocation: const AboveNavFabLocation(),
-      floatingActionButton: FloatingActionButton.extended(
+      floatingActionButton: canCreate ? FloatingActionButton.extended(
         onPressed: _showAddSheet,
         icon: const Icon(Icons.add_rounded),
         label: const Text('Add Lockers', style: TextStyle(fontWeight: FontWeight.w700)),
         backgroundColor: AppTheme.brand,
-      ),
+      ) : null,
     );
   }
 

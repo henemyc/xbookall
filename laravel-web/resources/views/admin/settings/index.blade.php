@@ -252,6 +252,60 @@
                     <button type="submit" class="btn btn-primary"><i class="bi bi-save me-2"></i> Save Security Settings</button>
                 </div>
             </form>
+            <hr class="my-5">
+
+            <div class="row g-4">
+                <div class="col-lg-6">
+                    <div class="settings-card-title"><i class="bi bi-person-gear me-2 text-primary"></i> Super Admin Profile</div>
+                    <div class="settings-muted mb-3">Update the account used to access this platform.</div>
+                    <form action="{{ route('admin.settings.profile') }}" method="POST">
+                        @csrf
+                        <div class="mb-3"><label class="form-label">Name</label><input class="form-control" name="name" value="{{ auth()->user()->name }}" required></div>
+                        <div class="mb-3"><label class="form-label">Email</label><input class="form-control" type="email" name="email" value="{{ auth()->user()->email }}" required></div>
+                        <button class="btn btn-outline-primary" type="submit"><i class="bi bi-save me-2"></i>Save Profile</button>
+                    </form>
+                </div>
+                <div class="col-lg-6">
+                    <div class="settings-card-title"><i class="bi bi-key me-2 text-warning"></i> Change Password</div>
+                    <div class="settings-muted mb-3">Use a strong password of at least 8 characters.</div>
+                    <form action="{{ route('admin.settings.password') }}" method="POST">
+                        @csrf
+                        <div class="mb-3"><label class="form-label">Current Password</label><input class="form-control" type="password" name="current_password" required></div>
+                        <div class="mb-3"><label class="form-label">New Password</label><input class="form-control" type="password" name="new_password" minlength="8" required></div>
+                        <div class="mb-3"><label class="form-label">Confirm New Password</label><input class="form-control" type="password" name="new_password_confirmation" minlength="8" required></div>
+                        <button class="btn btn-outline-warning" type="submit"><i class="bi bi-shield-check me-2"></i>Update Password</button>
+                    </form>
+                </div>
+            </div>
+
+            <hr class="my-5">
+            <div class="settings-card-title"><i class="bi bi-google me-2 text-danger"></i> Google Authenticator</div>
+            <div class="settings-muted mb-3">Google Authenticator is the primary login verification method when enabled. WhatsApp OTP stays available as fallback if Google Authenticator is not configured.</div>
+            <div id="googleAuthStatus" class="mb-3">
+                @if(($security['google_authenticator_configured'] ?? false))
+                    <span class="badge bg-success px-3 py-2">Google Authenticator Enabled</span>
+                @elseif(($security['google_authenticator_enabled'] ?? '0') === '1')
+                    <span class="badge bg-warning text-dark px-3 py-2">Setup Incomplete</span>
+                @else
+                    <span class="badge bg-secondary px-3 py-2">Google Authenticator Not Enabled</span>
+                @endif
+            </div>
+            <div id="googleAuthSetup" class="d-none border rounded-4 p-4 mb-3 bg-light">
+                <div class="row align-items-center g-3">
+                    <div class="col-md-auto"><div id="googleAuthQr"></div></div>
+                    <div class="col">
+                        <strong>1. Scan this QR code in Google Authenticator</strong>
+                        <div class="small text-muted mt-2">Or manually enter this secret:</div>
+                        <code id="googleAuthSecret" class="d-block mt-1"></code>
+                        <div class="input-group mt-3"><input class="form-control" id="googleAuthCode" maxlength="6" inputmode="numeric" placeholder="Enter 6-digit code"><button class="btn btn-primary" type="button" id="confirmGoogleAuth">Verify & Enable</button></div>
+                    </div>
+                </div>
+            </div>
+            @if(($security['google_authenticator_configured'] ?? false))
+                <div class="input-group" style="max-width:440px"><input class="form-control" id="disableGoogleAuthCode" maxlength="6" inputmode="numeric" placeholder="Current Google Authenticator code"><button class="btn btn-outline-danger" type="button" id="disableGoogleAuth">Disable Google Authenticator</button></div>
+            @else
+                <button class="btn btn-primary" type="button" id="setupGoogleAuth"><i class="bi bi-qr-code me-2"></i>{{ ($security['google_authenticator_enabled'] ?? '0') === '1' ? 'Restart Google Authenticator Setup' : 'Set Up Google Authenticator' }}</button>
+            @endif
         </div>
     </div>
 
@@ -487,6 +541,39 @@
 
     <div class="tab-pane fade" id="system-pane" role="tabpanel" tabindex="0">
         <div class="settings-panel mb-4">
+            <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+                <div><div class="settings-card-title"><i class="bi bi-bell-fill me-2 text-primary"></i> FCM Push Diagnostics</div><div class="settings-muted">Test Firebase Cloud Messaging from this server to a registered device.</div></div>
+                <span class="badge {{ $fcmDiagnostics['configured'] ? 'bg-success' : 'bg-danger' }} px-3 py-2">{{ $fcmDiagnostics['configured'] ? 'Configured' : 'Not Configured' }}</span>
+            </div>
+            <div class="row g-2 small mb-3">
+                <div class="col-md-4"><div class="mini-info">Project: <strong>{{ $fcmDiagnostics['project_id'] ?: 'Missing' }}</strong></div></div>
+                <div class="col-md-4"><div class="mini-info">Credential file: <strong>{{ $fcmDiagnostics['credential_exists'] ? 'Found' : 'Missing' }}</strong></div></div>
+                <div class="col-md-4"><div class="mini-info">JSON: <strong>{{ $fcmDiagnostics['credential_json_valid'] ? 'Valid' : 'Invalid' }}</strong></div></div>
+            </div>
+            <form action="{{ route('admin.settings.fcm.test') }}" method="POST" class="row g-3 align-items-end">
+                @csrf
+                <div class="col-md-9"><label class="form-label">Registered Device</label><select class="form-select" name="device_token_id" required><option value="">Select a device token</option>@foreach($fcmDeviceTokens as $device)<option value="{{ $device->id }}">{{ $device->user?->name ?? 'Unknown' }} — {{ $device->user?->email ?? 'Unknown' }} ({{ $device->platform }}, {{ $device->app_version }})</option>@endforeach</select></div>
+                <div class="col-md-3"><button class="btn btn-primary w-100" type="submit"><i class="bi bi-send me-2"></i>Send Test</button></div>
+            </form>
+            @if(session('fcm_test_result'))
+                @php($fcmTest = session('fcm_test_result'))
+                <div class="alert {{ !empty($fcmTest['success']) ? 'alert-success' : 'alert-danger' }} mt-3"><strong>{{ !empty($fcmTest['success']) ? 'FCM Test Sent' : 'FCM Test Failed' }}</strong><br>{{ $fcmTest['message'] }}@if(!empty($fcmTest['device_user']))<br><small>Device user: {{ $fcmTest['device_user'] }}</small>@endif</div>
+            @endif
+            <div class="mt-4">
+                <div class="small fw-bold mb-2">Recent Push Delivery History</div>
+                <div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>User</th><th>Category</th><th>Status</th><th>Time</th></tr></thead><tbody>@forelse($fcmDeliveryLogs as $log)<tr><td>{{ $log->user?->email ?? 'Unknown' }}</td><td>{{ $log->category }}</td><td><span class="badge {{ $log->status === 'sent' ? 'bg-success' : ($log->status === 'invalid_token' ? 'bg-warning text-dark' : 'bg-danger') }}">{{ $log->status }}</span>@if($log->error_message)<div class="small text-muted">{{ $log->error_message }}</div>@endif</td><td class="small">{{ $log->created_at?->diffForHumans() }}</td></tr>@empty<tr><td colspan="4" class="text-center text-muted">No push deliveries yet.</td></tr>@endforelse</tbody></table></div>
+            </div>
+        </div>
+        <div class="settings-panel mb-4">
+            <div class="settings-card-title"><i class="bi bi-toggles me-2 text-danger"></i> Platform Operation Mode</div>
+            <div class="settings-muted mb-3">Production hides destructive controls and blocks delete endpoints. Debug enables controlled maintenance/deletion tools.</div>
+            <form action="{{ route('admin.settings.operation-mode') }}" method="POST" class="row g-3 align-items-end">
+                @csrf
+                <div class="col-md-6"><label class="form-label">Mode</label><select class="form-select" name="operation_mode"><option value="production" {{ ($security['operation_mode'] ?? 'production') === 'production' ? 'selected' : '' }}>Production</option><option value="debug" {{ ($security['operation_mode'] ?? '') === 'debug' ? 'selected' : '' }}>Debug</option></select></div>
+                <div class="col-md-6"><button class="btn btn-danger" type="submit"><i class="bi bi-save me-2"></i>Save Operation Mode</button></div>
+            </form>
+        </div>
+        <div class="settings-panel mb-4">
             <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
                 <div>
                     <div class="settings-card-title"><i class="bi bi-database-gear me-2 text-warning"></i> Database Update</div>
@@ -565,5 +652,36 @@ function toggleWaParams() {
     else document.getElementById('waParamsCustom').classList.remove('d-none');
 }
 document.addEventListener('DOMContentLoaded', toggleWaParams);
+
+
+const csrf = document.querySelector('meta[name="csrf-token"]')?.content;
+const googleSetupButton = document.getElementById('setupGoogleAuth');
+if (googleSetupButton) googleSetupButton.addEventListener('click', async () => {
+    const res = await fetch('{{ route('admin.settings.google-auth.setup') }}', { method: 'POST', headers: { 'X-CSRF-TOKEN': csrf, 'Accept': 'application/json' } });
+    const data = await res.json();
+    if (!data.success) return alert(data.error || 'Could not set up Google Authenticator');
+    document.getElementById('googleAuthSetup').classList.remove('d-none');
+    document.getElementById('googleAuthSecret').textContent = data.secret;
+    document.getElementById('googleAuthQr').innerHTML = '';
+    new QRCode(document.getElementById('googleAuthQr'), { text: data.uri, width: 160, height: 160 });
+    googleSetupButton.classList.add('d-none');
+});
+
+document.getElementById('confirmGoogleAuth')?.addEventListener('click', async () => {
+    const code = document.getElementById('googleAuthCode').value;
+    const res = await fetch('{{ route('admin.settings.google-auth.confirm') }}', { method: 'POST', headers: { 'X-CSRF-TOKEN': csrf, 'Accept': 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify({ code }) });
+    const data = await res.json();
+    if (!data.success) return alert(data.error || 'Invalid code');
+    window.location.reload();
+});
+
+document.getElementById('disableGoogleAuth')?.addEventListener('click', async () => {
+    const code = document.getElementById('disableGoogleAuthCode').value;
+    const res = await fetch('{{ route('admin.settings.google-auth.disable') }}', { method: 'POST', headers: { 'X-CSRF-TOKEN': csrf, 'Accept': 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify({ code }) });
+    const data = await res.json();
+    if (!data.success) return alert(data.error || 'Invalid code');
+    window.location.reload();
+});
 </script>
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 @endpush

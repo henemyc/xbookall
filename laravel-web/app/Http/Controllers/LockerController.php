@@ -11,11 +11,16 @@ use Illuminate\Support\Facades\DB;
 
 class LockerController extends BaseController
 {
+    // Phase 3: locker actions below require their exact locker permission.
     /**
      * List lockers
      */
     public function index(Request $request): JsonResponse
     {
+        if (!$this->canPerformGymAction('lockers.view')) {
+            return $this->error('Permission denied', 403);
+        }
+
         if (!$this->planFeatureEnabled('lockers_enabled', true)) {
             return $this->error(\App\Services\SubscriptionFeatureService::featureLockedMessage('Locker management'), 402);
         }
@@ -34,6 +39,10 @@ class LockerController extends BaseController
      */
     public function store(Request $request): JsonResponse
     {
+        if (!$this->canPerformGymAction('lockers.create')) {
+            return $this->error('Permission denied', 403);
+        }
+
         if (!$this->planFeatureEnabled('lockers_enabled', true)) {
             return $this->error(\App\Services\SubscriptionFeatureService::featureLockedMessage('Locker management'), 402);
         }
@@ -59,6 +68,10 @@ class LockerController extends BaseController
      */
     public function assign(Request $request): JsonResponse
     {
+        if (!$this->canPerformGymAction('lockers.assign')) {
+            return $this->error('Permission denied', 403);
+        }
+
         if (!$this->planFeatureEnabled('lockers_enabled', true)) {
             return $this->error(\App\Services\SubscriptionFeatureService::featureLockedMessage('Locker management'), 402);
         }
@@ -104,6 +117,10 @@ class LockerController extends BaseController
      */
     public function unassign(Request $request): JsonResponse
     {
+        if (!$this->canPerformGymAction('lockers.assign')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $parentIds = $this->getGymParentIds();
 
         $request->validate([
@@ -138,6 +155,10 @@ class LockerController extends BaseController
      */
     public function destroy(int $id): JsonResponse
     {
+        if (!$this->canPerformGymAction('lockers.delete')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $parentIds = $this->getGymParentIds();
 
         $locker = Locker::where('id', $id)->whereIn('parent_id', $parentIds)->first();

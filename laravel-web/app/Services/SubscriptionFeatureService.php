@@ -59,6 +59,12 @@ class SubscriptionFeatureService
             return false;
         }
 
+        // Product rule: Classes start from Silver. Enforce this server-side
+        // even if an old Bronze feature record was seeded with classes_enabled=1.
+        if (strtolower((string) $tier->code) === 'bronze' && $featureKey === 'classes_enabled') {
+            return false;
+        }
+
         $feature = $tier->features->firstWhere('feature_key', $featureKey);
         if (!$feature) {
             return self::missingFeatureDefault($featureKey, $defaultForLegacy);

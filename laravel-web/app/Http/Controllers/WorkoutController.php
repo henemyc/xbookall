@@ -9,11 +9,16 @@ use Illuminate\Http\JsonResponse;
 
 class WorkoutController extends BaseController
 {
+    // Phase 3: staff workout actions require exact workout permissions.
     /**
      * List workouts
      */
     public function index(Request $request): JsonResponse
     {
+        if ($this->isStaff() && !$this->hasStaffPermission('workouts.view')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $parentIds = $this->getGymParentIds();
         $user = $this->currentUser();
 
@@ -39,6 +44,10 @@ class WorkoutController extends BaseController
      */
     public function store(Request $request): JsonResponse
     {
+        if (!$this->canPerformGymAction('workouts.create')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $pid = $this->getParentId();
 
         $request->validate([
@@ -67,6 +76,10 @@ class WorkoutController extends BaseController
      */
     public function update(Request $request, int $id): JsonResponse
     {
+        if (!$this->canPerformGymAction('workouts.edit')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $parentIds = $this->getGymParentIds();
 
         $workout = Workout::where('id', $id)->whereIn('parent_id', $parentIds)->first();
@@ -89,6 +102,10 @@ class WorkoutController extends BaseController
      */
     public function destroy(int $id): JsonResponse
     {
+        if (!$this->canPerformGymAction('workouts.delete')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $parentIds = $this->getGymParentIds();
 
         $workout = Workout::where('id', $id)->whereIn('parent_id', $parentIds)->first();
@@ -106,6 +123,10 @@ class WorkoutController extends BaseController
      */
     public function activities(Request $request): JsonResponse
     {
+        if (!$this->canPerformGymAction('workouts.view')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $parentIds = $this->getGymParentIds();
 
         $activities = WorkoutActivity::whereIn('parent_id', $parentIds)
@@ -120,6 +141,10 @@ class WorkoutController extends BaseController
      */
     public function storeActivity(Request $request): JsonResponse
     {
+        if (!$this->canPerformGymAction('workouts.create')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $pid = $this->getParentId();
 
         $request->validate([
@@ -142,6 +167,10 @@ class WorkoutController extends BaseController
      */
     public function destroyActivity(int $id): JsonResponse
     {
+        if (!$this->canPerformGymAction('workouts.delete')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $parentIds = $this->getGymParentIds();
 
         $activity = WorkoutActivity::where('id', $id)->whereIn('parent_id', $parentIds)->first();

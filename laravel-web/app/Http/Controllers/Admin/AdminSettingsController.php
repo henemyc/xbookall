@@ -4,9 +4,18 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\BaseController;
 use App\Models\Setting;
+use App\Models\DeviceToken;
+use App\Models\PushDeliveryLog;
 use App\Services\WhatsAppService;
+use App\Services\FcmPushService;
+use App\Services\PhoneIdentityService;
+use App\Services\GoogleAuthenticatorService;
+use App\Services\AcquisitionSourceService;
 use App\Support\PlatformMaintenance;
+use App\Support\PlatformOperationMode;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\Hash;
 
 class AdminSettingsController extends BaseController
 {
@@ -57,10 +66,23 @@ class AdminSettingsController extends BaseController
         $superAdmin = auth()->user();
         $security = [
             'super_admin_2fa_enabled' => Setting::getValue('super_admin_2fa_enabled', 1, '0'),
+            'google_authenticator_enabled' => Setting::getValue('super_admin_google_auth_enabled', 1, '0'),
+            'google_authenticator_configured' => !empty($superAdmin?->twofa_secret),
+            'operation_mode' => PlatformOperationMode::value(),
             'super_admin_phone' => $superAdmin?->phone_number ?? '',
         ];
 
-        return view('admin.settings.index', compact('smtp', 'whatsapp', 'platform', 'maintenance', 'security'));
+        $acquisitionSources = AcquisitionSourceService::all();
+        $fcmDiagnostics = app(FcmPushService::class)->diagnostics();
+        $fcmDeviceTokens = DeviceToken::with('user:id,name,email,type')
+            ->orderByDesc('last_seen_at')
+            ->limit(50)
+            ->get();
+        $fcmDeliveryLogs = PushDeliveryLog::with('user:id,name,email')
+            ->orderByDesc('created_at')
+            ->limit(10)
+            ->get();
+        return view('admin.settings.index', compact('smtp', 'whatsapp', 'platform', 'maintenance', 'security', 'acquisitionSources', 'fcmDiagnostics', 'fcmDeviceTokens', 'fcmDeliveryLogs'));
     }
 
     /**
@@ -205,6 +227,117 @@ class AdminSettingsController extends BaseController
             ->with('system_update_output', implode("\n\n", array_filter($output)));
     }
 
+    public function testFcm(Request $request)
+    {
+        $data = $request->validate(['device_token_id' => 'required|integer|exists:device_tokens,id']);
+        $device = DeviceToken::findOrFail($data['device_token_id']);
+        $fcm = app(FcmPushService::class);
+        $diagnostics = $fcm->diagnostics();
+        if (!$diagnostics['configured']) {
+            return redirect()->route('admin.settings.index')->with('fcm_test_result', ['success' => false, 'message' => 'FCM is not configured', 'diagnostics' => $diagnostics]);
+        }
+        $result = $fcm->sendToToken($device->token, 'GymXBook FCM Test', 'If you see this, Firebase push notifications are working.', [
+            'type' => 'fcm_test',
+            'route' => 'notifications',
+        ]);
+        $invalidRemoved = !empty($result['invalid']);
+        if ($invalidRemoved) $device->delete();
+        return redirect()->route('admin.settings.index')->with('fcm_test_result', [
+            'success' => (bool) ($result['success'] ?? false),
+            'message' => $result['success'] ?? false
+                ? 'FCM request accepted by Firebase.'
+                : ($invalidRemoved ? 'Invalid FCM token removed. Login again on that device to register a fresh token.' : ($result['error'] ?? 'FCM delivery failed')),
+            'diagnostics' => $diagnostics,
+            'device_user' => $device->user?->email,
+        ]);
+    }
+
+    public function updateAcquisitionSources(Request $request)
+    {
+        $sources = collect($request->input('sources', []))->map(function ($source) {
+            $key = strtolower(preg_replace('/[^a-z0-9_]/', '_', trim((string) ($source['key'] ?? ''))));
+            $label = trim((string) ($source['label'] ?? ''));
+            return ['key' => $key, 'label' => $label, 'enabled' => !empty($source['enabled'])];
+        })->filter(fn ($source) => $source['key'] !== '' && $source['label'] !== '')->unique('key')->values()->all();
+        if (!$sources) return back()->with('error', 'Keep at least one acquisition source.');
+        AcquisitionSourceService::save($sources);
+        return redirect()->route('admin.settings.index')->with('success', 'Acquisition sources updated');
+    }
+
+    public function updateOperationMode(Request $request)
+    {
+        $data = $request->validate(['operation_mode' => 'required|in:debug,production']);
+        Setting::setValue('platform_operation_mode', $data['operation_mode'], 1);
+        return redirect()->route('admin.settings.index')->with('success', 'Platform mode changed to ' . ucfirst($data['operation_mode']));
+    }
+
+    public function updateProfile(Request $request)
+    {
+        $admin = auth()->user();
+        $data = $request->validate([
+            'name' => 'required|string|max:255',
+            'email' => 'required|email|max:255|unique:users,email,' . ($admin?->id ?? 0),
+        ]);
+        $admin->update($data);
+        return redirect()->route('admin.settings.index')->with('success', 'Super Admin profile updated');
+    }
+
+    public function updatePassword(Request $request)
+    {
+        $admin = auth()->user();
+        $data = $request->validate([
+            'current_password' => 'required|string',
+            'new_password' => 'required|string|min:8|confirmed',
+        ]);
+        if (!Hash::check($data['current_password'], $admin->password)) {
+            return back()->with('error', 'Current password is incorrect');
+        }
+        $admin->tokens()->delete();
+        $admin->update(['password' => Hash::make($data['new_password'])]);
+        return redirect()->route('admin.settings.index')->with('success', 'Password updated. Other app sessions were revoked.');
+    }
+
+    public function setupGoogleAuthenticator(Request $request)
+    {
+        $admin = auth()->user();
+        $service = app(GoogleAuthenticatorService::class);
+        $secret = $service->generateSecret();
+        session(['admin_google_auth_setup_secret' => $secret]);
+        $uri = $service->provisioningUri('GymXBook Super Admin', $admin->email, $secret);
+        return response()->json(['success' => true, 'secret' => $secret, 'uri' => $uri]);
+    }
+
+    public function confirmGoogleAuthenticator(Request $request)
+    {
+        $request->validate(['code' => 'required|digits:6']);
+        $secret = session('admin_google_auth_setup_secret');
+        if (!$secret || !app(GoogleAuthenticatorService::class)->verify($secret, $request->code)) {
+            return response()->json(['success' => false, 'error' => 'Invalid Google Authenticator code'], 422);
+        }
+        $admin = auth()->user();
+        $admin->forceFill(['twofa_secret' => Crypt::encryptString($secret)])->save();
+        $admin->refresh();
+        if (empty($admin->twofa_secret)) {
+            return response()->json(['success' => false, 'error' => 'Could not securely save Google Authenticator setup'], 500);
+        }
+        Setting::setValue('super_admin_google_auth_enabled', '1', 1);
+        session()->forget('admin_google_auth_setup_secret');
+        return response()->json(['success' => true, 'message' => 'Google Authenticator enabled']);
+    }
+
+    public function disableGoogleAuthenticator(Request $request)
+    {
+        $request->validate(['code' => 'required|digits:6']);
+        $admin = auth()->user();
+        try { $secret = Crypt::decryptString((string) $admin->twofa_secret); } catch (\Throwable $e) { $secret = ''; }
+        if (!$secret || !app(GoogleAuthenticatorService::class)->verify($secret, $request->code)) {
+            return response()->json(['success' => false, 'error' => 'Invalid Google Authenticator code'], 422);
+        }
+        $admin->update(['twofa_secret' => null]);
+        Setting::setValue('super_admin_google_auth_enabled', '0', 1);
+        return response()->json(['success' => true, 'message' => 'Google Authenticator disabled']);
+    }
+
     public function updateSecurity(Request $request)
     {
         Setting::setValue('super_admin_2fa_enabled', $request->boolean('super_admin_2fa_enabled') ? '1' : '0', 1);
@@ -223,6 +356,9 @@ class AdminSettingsController extends BaseController
 
         $user = auth()->user();
         if ($user && $phone !== '') {
+            if (!app(PhoneIdentityService::class)->isAvailable($phone, (int) $user->id)) {
+                return redirect()->route('admin.settings.index')->with('error', PhoneIdentityService::DUPLICATE_MESSAGE);
+            }
             $user->update(['phone_number' => $phone]);
         }
 

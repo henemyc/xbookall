@@ -6,6 +6,7 @@ import 'package:gymxbook/core/widgets/ui.dart';
 import 'package:gymxbook/core/api/api_client.dart';
 import 'package:gymxbook/core/utils/date_formatter.dart';
 import 'package:gymxbook/features/auth/providers/auth_provider.dart';
+import 'package:gymxbook/core/providers/permission_provider.dart';
 import '../models/invoice.dart';
 
 class InvoiceDetailScreen extends ConsumerStatefulWidget {
@@ -46,8 +47,21 @@ class _InvoiceDetailScreenState extends ConsumerState<InvoiceDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final tt = context.tokens;
+    final permissions = ref.watch(permissionProvider);
+    final canDelete = permissions.can('invoices.delete');
+    final canAddPayment = permissions.can('invoices.payment');
     return Scaffold(
-      appBar: AppBar(title: Text(invoice != null ? 'INV #${invoice!.invoiceId}' : 'Invoice')),
+      appBar: AppBar(
+        title: Text(invoice != null ? 'INV #${invoice!.invoiceId}' : 'Invoice'),
+        actions: [
+          if (invoice != null && canDelete)
+            IconButton(
+              tooltip: 'Delete invoice',
+              onPressed: _confirmDeleteInvoice,
+              icon: const Icon(Icons.delete_outline_rounded, color: AppTheme.danger),
+            ),
+        ],
+      ),
       body: loading
           ? const SkeletonList(count: 3)
           : error != null
@@ -59,11 +73,38 @@ class _InvoiceDetailScreenState extends ConsumerState<InvoiceDetailScreen> {
                       child: Column(children: [
                         FadeInUp(child: _paper(tt)),
                         const SizedBox(height: 20),
-                        if (invoice!.dueAmount > 0)
+                        if (invoice!.dueAmount > 0 && canAddPayment)
                           FadeInUp(delayMs: 80, child: FireButton(label: 'Add Payment  •  Due ₹${invoice!.dueAmount.toStringAsFixed(0)}', icon: Icons.payments_rounded, onPressed: () => _showPaymentSheet(invoice!))),
                       ]),
                     ),
     );
+  }
+
+  Future<void> _confirmDeleteInvoice() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete invoice?'),
+        content: const Text('This invoice, its line items, and all payment transactions recorded from this invoice will be permanently deleted.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.danger),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await ref.read(apiClientProvider).deleteInvoice(widget.invoiceDbId);
+      if (!mounted) return;
+      Toast.success(context, 'Invoice and related transactions deleted');
+      Navigator.pop(context, true);
+    } catch (_) {
+      if (mounted) Toast.error(context, 'Could not delete invoice');
+    }
   }
 
   Widget _paper(dynamic tt) {

@@ -241,7 +241,10 @@
     </div>
     <div class="col-lg-5">
         <div class="table-card h-100">
-            <h6 class="mb-3"><i class="bi bi-credit-card me-2" style="color:var(--success);"></i> Recent Payments</h6>
+            <div class="d-flex align-items-center justify-content-between mb-3">
+                <h6 class="mb-0"><i class="bi bi-credit-card me-2" style="color:var(--success);"></i> Recent Payments</h6>
+                <a href="{{ route('admin.revenue.payments') }}" class="btn btn-sm btn-outline-success">View All <i class="bi bi-arrow-right ms-1"></i></a>
+            </div>
             @forelse($recentPayments as $payment)
                 <div class="d-flex align-items-center {{ !$loop->last ? 'mb-3 pb-3 border-bottom' : '' }}">
                     <div class="avatar me-3" style="background:linear-gradient(135deg,#16c784,#0d9c5f);font-size:14px;width:42px;height:42px;border-radius:14px;">
@@ -258,6 +261,34 @@
                     <i class="bi bi-credit-card fs-1 d-block mb-2" style="opacity:.25"></i>
                     No recent payments
                 </div>
+            @endforelse
+        </div>
+    </div>
+</div>
+
+<div class="row g-4 mb-4">
+    <div class="col-lg-5">
+        <div class="table-card h-100">
+            <div class="d-flex align-items-center justify-content-between mb-2">
+                <div>
+                    <h6 class="mb-1"><i class="bi bi-pie-chart me-2" style="color:#ff6b2c;"></i> Gym Acquisition Sources</h6>
+                    <div class="text-muted" style="font-size:12px;">How gym owners discovered GymXBook.</div>
+                </div>
+                <span class="badge bg-light text-dark">{{ $acquisitionSources->sum('total') }} gyms</span>
+            </div>
+            <div id="acquisitionChart" style="min-height:300px;"></div>
+        </div>
+    </div>
+    <div class="col-lg-7">
+        <div class="table-card h-100">
+            <h6 class="mb-3"><i class="bi bi-list-check me-2" style="color:#8b5cf6;"></i> Acquisition Breakdown</h6>
+            @forelse($acquisitionSources as $source)
+                <div class="d-flex justify-content-between align-items-center {{ !$loop->last ? 'mb-3 pb-3 border-bottom' : '' }}">
+                    <span>{{ ucwords(str_replace('_', ' ', $source->source)) }}</span>
+                    <strong>{{ $source->total }}</strong>
+                </div>
+            @empty
+                <div class="text-muted text-center py-4">No acquisition data yet.</div>
             @endforelse
         </div>
     </div>
@@ -369,6 +400,41 @@ document.addEventListener('DOMContentLoaded', function () {
     const monthlyValues = @json($monthlyGyms->pluck('count')->map(fn($v) => (int) $v)->values());
     const dailyLabels = @json($dailyGyms->pluck('label')->values());
     const dailyValues = @json($dailyGyms->pluck('count')->map(fn($v) => (int) $v)->values());
+
+    const acquisitionLabels = @json($acquisitionLabels);
+    const acquisitionValues = @json($acquisitionValues);
+    const acquisitionEl = document.querySelector('#acquisitionChart');
+    if (acquisitionEl && !acquisitionValues.length) {
+        acquisitionEl.innerHTML = '<div class="text-muted text-center pt-5">No acquisition data yet.</div>';
+    }
+    if (acquisitionEl && typeof ApexCharts !== 'undefined' && acquisitionValues.length) {
+        new ApexCharts(acquisitionEl, {
+            chart: { type: 'donut', height: 300, fontFamily: 'Poppins, sans-serif' },
+            series: acquisitionValues,
+            labels: acquisitionLabels,
+            colors: ['#ff6b2c', '#7c3aed', '#16c784', '#3b9eff', '#ffb020', '#ec4899', '#06b6d4', '#64748b'],
+            legend: { position: 'bottom', fontSize: '12px' },
+            dataLabels: { enabled: true, formatter: function (value) { return Math.round(value) + '%'; } },
+            plotOptions: {
+                pie: {
+                    donut: {
+                        size: '62%',
+                        labels: {
+                            show: true,
+                            total: {
+                                show: true,
+                                label: 'Gyms',
+                                formatter: function () {
+                                    return acquisitionValues.reduce((a, b) => a + b, 0);
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            tooltip: { y: { formatter: function (value) { return value + (value === 1 ? ' gym' : ' gyms'); } } }
+        }).render();
+    }
 
     const chartEl = document.querySelector('#gymsOnboardChart');
     if (!chartEl || typeof ApexCharts === 'undefined') return;

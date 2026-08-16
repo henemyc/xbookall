@@ -14,7 +14,7 @@ class ClassController extends BaseController
 {
     public function index(Request $request): JsonResponse
     {
-        if (!$this->isAdmin()) return $this->error('Admin access required', 403);
+        if (!$this->canPerformGymAction('classes.view')) return $this->error('Permission denied', 403);
         if (!$this->planFeatureEnabled('classes_enabled', true)) {
             return $this->error(\App\Services\SubscriptionFeatureService::featureLockedMessage('Classes'), 402);
         }
@@ -32,7 +32,7 @@ class ClassController extends BaseController
 
     public function store(Request $request): JsonResponse
     {
-        if (!$this->isAdmin()) return $this->error('Admin access required', 403);
+        if (!$this->canPerformGymAction('classes.create')) return $this->error('Permission denied', 403);
         if (!$this->planFeatureEnabled('classes_enabled', true)) {
             return $this->error(\App\Services\SubscriptionFeatureService::featureLockedMessage('Classes'), 402);
         }
@@ -94,7 +94,7 @@ class ClassController extends BaseController
 
     public function show(int $id): JsonResponse
     {
-        if (!$this->isAdmin()) return $this->error('Admin access required', 403);
+        if (!$this->canPerformGymAction('classes.view')) return $this->error('Permission denied', 403);
 
         $class = $this->findScopedClass($id);
         if (!$class) return $this->error('Class not found', 404);
@@ -105,7 +105,7 @@ class ClassController extends BaseController
 
     public function update(Request $request, int $id): JsonResponse
     {
-        if (!$this->isAdmin()) return $this->error('Admin access required', 403);
+        if (!$this->canPerformGymAction('classes.edit')) return $this->error('Permission denied', 403);
 
         $class = $this->findScopedClass($id);
         if (!$class) return $this->error('Class not found', 404);
@@ -166,7 +166,7 @@ class ClassController extends BaseController
 
     public function destroy(int $id): JsonResponse
     {
-        if (!$this->isAdmin()) return $this->error('Admin access required', 403);
+        if (!$this->canPerformGymAction('classes.delete')) return $this->error('Permission denied', 403);
 
         $class = $this->findScopedClass($id);
         if (!$class) return $this->error('Class not found', 404);

@@ -1,15 +1,23 @@
 import 'dart:convert';
+import 'dart:io';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:image_cropper/image_cropper.dart';
 import 'package:gymxbook/core/widgets/ui.dart';
 import 'package:gymxbook/core/api/api_client.dart';
 import 'package:gymxbook/core/utils/date_formatter.dart';
 import 'package:gymxbook/features/auth/providers/auth_provider.dart';
+import 'package:gymxbook/core/providers/permission_provider.dart';
 import 'package:gymxbook/features/invoices/models/invoice.dart';
 import 'package:gymxbook/features/invoices/screens/invoice_detail_screen.dart';
+import 'package:gymxbook/features/diets/screens/assign_member_diet_screen.dart';
+import 'package:gymxbook/features/diets/screens/member_diet_detail_screen.dart';
 
+// Repaired: removed duplicated trailing Dart fragment.
 class MemberDetailScreen extends ConsumerStatefulWidget {
   final int memberId;
   final String memberName;
@@ -23,6 +31,7 @@ class _MemberDetailScreenState extends ConsumerState<MemberDetailScreen> {
   Map<String, dynamic>? member;
   List _invoices = [];
   List _payments = [];
+  List _diets = [];
   bool loading = true;
   String? error;
 
@@ -45,6 +54,12 @@ class _MemberDetailScreenState extends ConsumerState<MemberDetailScreen> {
 
       _invoices = invoicesRaw;
       _payments = txRaw;
+      try {
+        final dietResponse = await api.getMemberDiets(widget.memberId);
+        _diets = (dietResponse['diets'] ?? []) as List;
+      } catch (_) {
+        _diets = [];
+      }
 
       // Fallback: if still empty, try dedicated endpoint
       if (_invoices.isEmpty && _payments.isEmpty) {
@@ -91,6 +106,8 @@ class _MemberDetailScreenState extends ConsumerState<MemberDetailScreen> {
                             return Column(children: list.map((c) => _rowTile(Icons.check_circle_rounded, AppTheme.brand, c['title'] ?? '', '₹${c['fees'] ?? 0}')).toList());
                           })),
                           const SizedBox(height: 12),
+                          FadeInUp(delayMs: 180, child: _dietSummary()),
+                          const SizedBox(height: 12),
                           FadeInUp(delayMs: 190, child: _healthSection()),
                           const SizedBox(height: 12),
                           FadeInUp(delayMs: 210, child: _sectionCard('Attendance History', Icons.fact_check_rounded, AppTheme.success, (member!['attendance_history'] as List?) ?? [], (list) {
@@ -104,52 +121,135 @@ class _MemberDetailScreenState extends ConsumerState<MemberDetailScreen> {
                           FadeInUp(delayMs: 230, child: _sectionCard('Freeze History', Icons.ac_unit_rounded, AppTheme.info, (member!['freeze_logs'] as List?) ?? [], (list) {
                             return Column(children: list.map((f) => _rowTile(Icons.pause_circle_rounded, AppTheme.info, '${DateFormatter.formatDate(f['freeze_start_date'])} → ${DateFormatter.formatDate(f['freeze_end_date'])}', '${f['freeze_days']} days${(f['remarks'] ?? '').toString().isNotEmpty ? ' • ${f['remarks']}' : ''}')).toList());
                           })),
-                          const SizedBox(height: 24),
-                          // Plain delete at the very bottom (no Danger Zone box).
-                          FadeInUp(delayMs: 250, child: SizedBox(width: double.infinity, child: OutlinedButton.icon(
-                            style: OutlinedButton.styleFrom(foregroundColor: AppTheme.danger, side: BorderSide(color: AppTheme.danger.withOpacity(0.4)), padding: const EdgeInsets.symmetric(vertical: 15)),
-                            onPressed: _hardDelete,
-                            icon: const Icon(Icons.delete_outline_rounded),
-                            label: const Text('Delete Member'),
-                          ))),
+                          // Destructive actions are kept inside the compact More sheet above.
                         ],
                       ),
                     ),
     );
   }
 
+  Future<void> _showPhotoOptions() async {
+    if (!ref.read(permissionProvider).can('members.edit')) {
+      Toast.error(context, 'Your role does not allow editing this member.');
+      return;
+    }
+    final hasPhoto = (member?['profile'] ?? '').toString().isNotEmpty;
+    await showAppSheet(
+      context,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 4, 20, 22),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Text('Member profile photo', style: context.typo.titleLarge),
+          const SizedBox(height: 12),
+          _photoOption(Icons.camera_alt_rounded, 'Take photo', () { Navigator.pop(context); _pickMemberPhoto(ImageSource.camera); }),
+          _photoOption(Icons.photo_library_rounded, 'Choose from gallery', () { Navigator.pop(context); _pickMemberPhoto(ImageSource.gallery); }),
+          if (hasPhoto) _photoOption(Icons.visibility_rounded, 'View photo', () { Navigator.pop(context); _showPhotoViewer(); }),
+          if (hasPhoto) _photoOption(Icons.delete_outline_rounded, 'Remove photo', () { Navigator.pop(context); _removeMemberPhoto(); }, danger: true),
+        ]),
+      ),
+    );
+  }
+
+  Widget _photoOption(IconData icon, String label, VoidCallback tap, {bool danger = false}) => ListTile(
+    onTap: tap,
+    leading: IconBadge(icon, color: danger ? AppTheme.danger : AppTheme.brand),
+    title: Text(label, style: context.typo.titleMedium?.copyWith(color: danger ? AppTheme.danger : null)),
+    trailing: Icon(Icons.chevron_right_rounded, color: context.tokens.textTertiary),
+  );
+
+  Future<void> _pickMemberPhoto(ImageSource source) async {
+    try {
+      final image = await ImagePicker().pickImage(source: source, imageQuality: 82, maxWidth: 1440, maxHeight: 1440);
+      if (image == null) return;
+      final cropped = await ImageCropper().cropImage(
+        sourcePath: image.path,
+        aspectRatio: const CropAspectRatio(ratioX: 1, ratioY: 1),
+        uiSettings: [AndroidUiSettings(toolbarTitle: 'Crop Member Photo', lockAspectRatio: true)],
+      );
+      if (cropped == null) return;
+      final result = await ref.read(apiClientProvider).uploadMemberPhoto(widget.memberId, File(cropped.path));
+      if (!mounted) return;
+      setState(() {
+        member = {...?member, 'profile': result['profile'], 'profile_photo_url': result['profile_photo_url']};
+      });
+      Toast.success(context, 'Profile photo updated');
+    } catch (e) {
+      if (mounted) Toast.error(context, _photoError(e, 'Could not update profile photo'));
+    }
+  }
+
+  String _photoError(Object error, String fallback) {
+    try {
+      final data = (error as dynamic).response?.data;
+      if (data is Map) return (data['error'] ?? data['message'] ?? fallback).toString();
+    } catch (_) {}
+    return fallback;
+  }
+
+  Future<void> _removeMemberPhoto() async {
+    try {
+      final result = await ref.read(apiClientProvider).removeMemberPhoto(widget.memberId);
+      if (!mounted) return;
+      setState(() {
+        member = {...?member, 'profile': result['profile'], 'profile_photo_url': result['profile_photo_url']};
+      });
+      Toast.success(context, 'Profile photo removed');
+    } catch (_) {
+      if (mounted) Toast.error(context, 'Could not remove profile photo');
+    }
+  }
+
+  void _showPhotoViewer() {
+    final url = member?['profile_photo_url']?.toString() ?? '';
+    if (url.isEmpty) return;
+    showGeneralDialog(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'Close photo',
+      barrierColor: Colors.black.withOpacity(.35),
+      pageBuilder: (_, __, ___) => BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+        child: GestureDetector(
+          onTap: () => Navigator.pop(context),
+          child: Center(child: Hero(tag: 'member-photo-${widget.memberId}', child: FractionallySizedBox(widthFactor: .78, heightFactor: .72, child: InteractiveViewer(child: ClipRRect(borderRadius: BorderRadius.circular(20), child: Image.network(url, fit: BoxFit.contain)))))),
+        ),
+      ),
+      transitionBuilder: (_, animation, __, child) => FadeTransition(opacity: animation, child: ScaleTransition(scale: Tween<double>(begin: .72, end: 1).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic)), child: child)),
+    );
+  }
+
   Widget _header() {
+    final expiry = DateFormatter.formatDate(member!['membership_expiry_date']);
+    final frozen = member!['trainee_status'] == 3;
     return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(gradient: AppTheme.darkHeroGradient, borderRadius: BorderRadius.circular(26)),
+      padding: const EdgeInsets.fromLTRB(22, 30, 22, 24),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(colors: [Color(0xFF030303), Color(0xFF15151A), Color(0xFF0B1624)], begin: Alignment.topCenter, end: Alignment.bottomCenter),
+        borderRadius: BorderRadius.circular(32),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(.26), blurRadius: 28, offset: const Offset(0, 12))],
+      ),
       child: Column(children: [
-        Row(children: [
-          GxAvatar(name: member!['name'] ?? 'M', size: 62),
-          const SizedBox(width: 16),
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(member!['name'] ?? '', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w700)),
-            const SizedBox(height: 4),
-            if ((member!['email'] ?? '').toString().isNotEmpty) Text(member!['email'] ?? '', style: GoogleFonts.poppins(color: Colors.white.withOpacity(0.7), fontSize: 12.5)),
-            if (_phone.isNotEmpty) Text(_phone, style: GoogleFonts.poppins(color: Colors.white.withOpacity(0.7), fontSize: 12.5)),
-          ])),
+        Stack(clipBehavior: Clip.none, children: [
+          Container(padding: const EdgeInsets.all(4), decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: AppTheme.brandAmber.withOpacity(.9), width: 2), boxShadow: [BoxShadow(color: AppTheme.brand.withOpacity(.35), blurRadius: 22)]), child: Pressable(radius: 52, onTap: () { final hasPhoto=(member?['profile']??'').toString().isNotEmpty; if(hasPhoto)_showPhotoViewer();else _showPhotoOptions(); }, child: Hero(tag: 'member-photo-${widget.memberId}', child: GxAvatar(name: member!['name'] ?? 'M', imageUrl: member!['profile_photo_url']?.toString(), size: 104)))),
+          if (ref.watch(permissionProvider).can('members.edit')) Positioned(right: 0, bottom: 2, child: Pressable(radius: 18, onTap: _showPhotoOptions, child: Container(width: 34,height:34,decoration:BoxDecoration(color:AppTheme.brand,shape:BoxShape.circle,border:Border.all(color:Colors.white,width:2)),child:const Icon(Icons.camera_alt_rounded,size:16,color:Colors.white)))),
         ]),
-        if (_phone.isNotEmpty) ...[
-          const SizedBox(height: 16),
-          Row(children: [
-            Expanded(child: _contactBtn(Icons.call_rounded, 'Call', AppTheme.success, _callMember)),
-            const SizedBox(width: 10),
-            Expanded(child: _contactBtn(Icons.chat_rounded, 'WhatsApp', const Color(0xFF25D366), _whatsappMember)),
-          ]),
-        ],
-        const SizedBox(height: 16),
-        Row(children: [
-          _quickStat('Plan', member!['plan_name'] ?? 'No Plan', Icons.card_membership_rounded),
-          const SizedBox(width: 12),
-          _quickStat('Expiry', DateFormatter.formatDate(member!['membership_expiry_date']), Icons.event_rounded),
+        const SizedBox(height: 14),
+        Text(member!['name'] ?? '', textAlign: TextAlign.center, style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w800)),
+        const SizedBox(height: 4),
+        Text(_phone.isEmpty ? 'Member Profile' : _phone, style: GoogleFonts.poppins(color: Colors.white70, fontSize: 13)),
+        const SizedBox(height: 14),
+        Wrap(alignment: WrapAlignment.center, spacing: 8, runSpacing: 8, children: [
+          _heroPill(Icons.card_membership_rounded, member!['plan_name'] ?? 'No Plan', AppTheme.brandAmber),
+          _heroPill(frozen ? Icons.ac_unit_rounded : Icons.verified_rounded, frozen ? 'Frozen' : 'Active', frozen ? AppTheme.info : AppTheme.success),
+          _heroPill(Icons.event_rounded, expiry, Colors.white70),
         ]),
+        if (_phone.isNotEmpty) ...[const SizedBox(height: 18), Row(mainAxisAlignment: MainAxisAlignment.center, children: [_roundContact(Icons.call_rounded, AppTheme.success, _callMember), const SizedBox(width: 16), _roundContact(Icons.chat_rounded, const Color(0xFF25D366), _whatsappMember)])],
       ]),
     );
   }
+
+  Widget _heroPill(IconData icon, String label, Color color) => Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6), decoration: BoxDecoration(color: color.withOpacity(.14), borderRadius: BorderRadius.circular(20), border: Border.all(color: color.withOpacity(.28))), child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(icon, size: 13, color: color), const SizedBox(width: 5), Text(label, style: GoogleFonts.poppins(color: Colors.white, fontSize: 10.5, fontWeight: FontWeight.w600))]));
+  Widget _roundContact(IconData icon, Color color, VoidCallback tap) => Pressable(radius: 24, onTap: tap, child: Container(width: 46, height: 46, decoration: BoxDecoration(color: color.withOpacity(.18), shape: BoxShape.circle, border: Border.all(color: color.withOpacity(.45))), child: Icon(icon, color: color)));
 
   Widget _contactBtn(IconData icon, String label, Color color, VoidCallback onTap) {
     return Pressable(radius: 14, onTap: onTap, child: Container(
@@ -181,19 +281,49 @@ class _MemberDetailScreenState extends ConsumerState<MemberDetailScreen> {
 
   Widget _actions() {
     final frozen = member!['trainee_status'] == 3;
-    return Column(children: [
-      Row(children: [
-        Expanded(child: FireButton(label: 'Renew', icon: Icons.autorenew_rounded, onPressed: _showRenewSheet)),
-        const SizedBox(width: 10),
-        Expanded(child: FireButton(label: frozen ? 'Unfreeze' : 'Freeze', icon: Icons.ac_unit_rounded, gradient: AppTheme.amberGradient, onPressed: _showFreezeSheet)),
-      ]),
-      const SizedBox(height: 10),
-      Row(children: [
-        Expanded(child: OutlinedButton.icon(onPressed: _showWorkoutSheet, icon: const Icon(Icons.fitness_center_rounded, size: 18), label: const Text('Workout'))),
-        const SizedBox(width: 10),
-        Expanded(child: OutlinedButton.icon(onPressed: _editMember, icon: const Icon(Icons.edit_rounded, size: 18), label: const Text('Edit'))),
-      ]),
-    ]);
+    final permissions = ref.watch(permissionProvider);
+    final actions = <Widget>[
+      if (permissions.can('members.renew')) _actionOrb(Icons.autorenew_rounded, 'Renew', AppTheme.brand, _showRenewSheet),
+      if (permissions.can('members.edit')) _actionOrb(Icons.edit_rounded, 'Edit', AppTheme.info, _editMember),
+      _actionOrb(Icons.fitness_center_rounded, 'Workout', AppTheme.warning, _showWorkoutSheet),
+      if (permissions.can('diets.assign')) _actionOrb(Icons.restaurant_menu_rounded, 'Diet', AppTheme.success, _assignDiet),
+      if (permissions.can('members.freeze') || permissions.can('members.delete')) _actionOrb(Icons.more_horiz_rounded, 'More', context.tokens.textSecondary, () => _showMemberMore(frozen, permissions)),
+    ];
+    return Container(padding: const EdgeInsets.symmetric(vertical: 4), child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: actions));
+  }
+
+  Widget _actionOrb(IconData icon, String label, Color color, VoidCallback onTap) => Column(mainAxisSize: MainAxisSize.min, children: [
+    Pressable(radius: 24, onTap: onTap, child: Container(width: 48, height: 48, decoration: BoxDecoration(color: color.withOpacity(.12), shape: BoxShape.circle), child: Icon(icon, color: color))),
+    const SizedBox(height: 5), Text(label, style: context.typo.labelSmall),
+  ]);
+
+  void _assignDiet() async {
+    final result = await Navigator.push(context, MaterialPageRoute(builder: (_) => AssignMemberDietScreen(memberId: widget.memberId, memberName: widget.memberName)));
+    if (result == true && mounted) { Toast.success(context, 'Diet plan assigned'); _load(); }
+  }
+
+  void _showMemberMore(bool frozen, dynamic permissions) {
+    showAppSheet(context, child: Padding(padding: const EdgeInsets.fromLTRB(20, 8, 20, 24), child: Column(mainAxisSize: MainAxisSize.min, children: [
+      Text('Member Actions', style: context.typo.titleLarge), const SizedBox(height: 12),
+      if (permissions.can('members.freeze')) ListTile(leading: Icon(frozen ? Icons.play_circle_rounded : Icons.ac_unit_rounded), title: Text(frozen ? 'Unfreeze Membership' : 'Freeze Membership'), onTap: () { Navigator.pop(context); _showFreezeSheet(); }),
+      if (permissions.can('members.delete')) ListTile(leading: const Icon(Icons.delete_outline_rounded, color: AppTheme.danger), title: Text('Delete Member', style: context.typo.titleMedium?.copyWith(color: AppTheme.danger)), onTap: () { Navigator.pop(context); _hardDelete(); }),
+    ])));
+  }
+
+  Widget _dietSummary() {
+    final active = _diets.where((d) => (d['status'] ?? '').toString() == 'active').cast<dynamic>().toList();
+    final diet = active.isNotEmpty ? Map<String, dynamic>.from(active.first as Map) : null;
+    return SurfaceCard(onTap: diet == null ? null : () => Navigator.push(context, MaterialPageRoute(builder: (_) => MemberDietDetailScreen(diet: diet, memberName: widget.memberName))), child: Row(children: [
+      IconBadge(Icons.restaurant_menu_rounded, color: AppTheme.success, size: 42),
+      const SizedBox(width: 12),
+      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('Diet Plan', style: context.typo.titleMedium),
+        const SizedBox(height: 3),
+        Text(diet == null ? 'No active diet assigned' : (diet['title'] ?? 'Active Diet').toString(), style: context.typo.bodySmall?.copyWith(color: context.tokens.textTertiary)),
+        if (diet != null && (diet['goal'] ?? '').toString().isNotEmpty) Text(diet['goal'], style: context.typo.bodySmall?.copyWith(color: AppTheme.success)),
+      ])),
+      if (diet != null) StatusBadge('ACTIVE', color: AppTheme.success),
+    ]));
   }
 
   // ── Invoices of this member ───────────────────────────────────────
@@ -469,8 +599,10 @@ class _MemberDetailScreenState extends ConsumerState<MemberDetailScreen> {
   void _showRenewSheet() {
     final paidCtrl = TextEditingController();
     String? selectedPlan;
-    DateTime? start = DateTime.now();
-    DateTime? expiry = DateTime.now().add(const Duration(days: 30));
+    final oldExpiry = DateTime.tryParse((member?['membership_expiry_date'] ?? '').toString());
+    final minimumRenewalStart = (oldExpiry ?? DateTime.now()).add(const Duration(days: 1));
+    DateTime? start = minimumRenewalStart;
+    DateTime? expiry = minimumRenewalStart.add(const Duration(days: 30));
     List plans = [];
     bool loadingPlans = true;
 
@@ -508,9 +640,11 @@ class _MemberDetailScreenState extends ConsumerState<MemberDetailScreen> {
                   items: plans.map((p) => DropdownMenuItem<String>(value: p['id'].toString(), child: Text("${p['title']} - ₹${p['amount']}"))).toList(),
                   onChanged: (v) => setSheet(() { selectedPlan = v; recalc(); }),
                 ),
+          const SizedBox(height: 8),
+          Text('Renewal starts from ${DateFormatter.formatDate("${minimumRenewalStart.year}-${minimumRenewalStart.month.toString().padLeft(2, '0')}-${minimumRenewalStart.day.toString().padLeft(2, '0')}")}.', style: context.typo.bodySmall?.copyWith(color: AppTheme.info)),
           const SizedBox(height: 12),
           Row(children: [
-            Expanded(child: _dateField(ctx, 'Start Date', start!, (d) => setSheet(() { start = d; recalc(); }), DateTime(2020))),
+            Expanded(child: _dateField(ctx, 'Start Date', start!, (d) => setSheet(() { start = d; recalc(); }), minimumRenewalStart)),
             const SizedBox(width: 12),
             Expanded(child: _dateField(ctx, 'Expiry Date', expiry!, (d) => setSheet(() => expiry = d), DateTime(2020))),
           ]),
@@ -608,20 +742,33 @@ class _MemberDetailScreenState extends ConsumerState<MemberDetailScreen> {
   }
 
   // ── Workout — proper structured form (day + exercises), not raw JSON ─
-  void _showWorkoutSheet() {
-    final notesCtrl = TextEditingController();
-    DateTime start = DateTime.now();
-    // Editable list of days, each with its own exercises text (one per line).
+  Future<void> _showWorkoutSheet() async {
+    Map<String, dynamic>? existing;
+    try {
+      final response = await ref.read(apiClientProvider).getWorkouts(userId: widget.memberId);
+      final list = (response['workouts'] as List?) ?? const [];
+      if (list.isNotEmpty) existing = Map<String, dynamic>.from(list.first as Map);
+    } catch (_) {}
+    final notesCtrl = TextEditingController(text: existing?['notes']?.toString() ?? '');
+    DateTime start = DateTime.tryParse(existing?['start_date']?.toString() ?? '') ?? DateTime.now();
     final days = <Map<String, dynamic>>[
       {'day': 'Monday', 'ctrl': TextEditingController()},
     ];
+    if (existing?['workout_history'] != null) {
+      try {
+        final oldPlan = jsonDecode(existing!['workout_history'].toString()) as List;
+        days
+          ..clear()
+          ..addAll(oldPlan.map((d) => {'day': d['day'] ?? 'Monday', 'ctrl': TextEditingController(text: ((d['exercises'] as List?) ?? const []).join('\n'))}));
+      } catch (_) {}
+    }
     const weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
     showAppSheet(context, child: StatefulBuilder(builder: (ctx, setSheet) {
       return SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
         child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [IconBadge(Icons.fitness_center_rounded, color: AppTheme.brand), const SizedBox(width: 12), Text('Assign Workout', style: context.typo.titleLarge)]),
+          Row(children: [IconBadge(Icons.fitness_center_rounded, color: AppTheme.brand), const SizedBox(width: 12), Text(existing == null ? 'Assign Workout' : 'Edit Workout', style: context.typo.titleLarge)]),
           const SizedBox(height: 16),
           _dateField(ctx, 'Start Date', start, (d) => setSheet(() => start = d), DateTime(2020)),
           const SizedBox(height: 14),
@@ -653,7 +800,7 @@ class _MemberDetailScreenState extends ConsumerState<MemberDetailScreen> {
           const SizedBox(height: 8),
           TextField(controller: notesCtrl, decoration: const InputDecoration(labelText: 'Notes (optional)')),
           const SizedBox(height: 18),
-          FireButton(label: 'Assign Workout', onPressed: () async {
+          FireButton(label: existing == null ? 'Assign Workout' : 'Save Workout', onPressed: () async {
             // Build the same JSON structure the backend expects.
             final plan = days.map((d) {
               final lines = (d['ctrl'] as TextEditingController).text.split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty).toList();
@@ -661,15 +808,19 @@ class _MemberDetailScreenState extends ConsumerState<MemberDetailScreen> {
             }).where((d) => (d['exercises'] as List).isNotEmpty).toList();
             if (plan.isEmpty) { Toast.error(ctx, 'Add at least one exercise'); return; }
             try {
-              // Laravel REST: POST /v1/workouts
-              await ref.read(apiClientProvider).createWorkout({
+              final workoutData = {
                 'user_id': widget.memberId,
                 'workout_plan': jsonEncode(plan),
                 'notes': notesCtrl.text.trim(),
                 'start_date': "${start.year}-${start.month.toString().padLeft(2, '0')}-${start.day.toString().padLeft(2, '0')}",
-              });
+              };
+              if (existing == null) {
+                await ref.read(apiClientProvider).createWorkout(workoutData);
+              } else {
+                await ref.read(apiClientProvider).updateWorkout(existing['id'], workoutData);
+              }
               if (mounted) Navigator.pop(ctx);
-              if (mounted) Toast.success(context, 'Workout assigned');
+              if (mounted) Toast.success(context, existing == null ? 'Workout assigned' : 'Workout updated');
             } catch (e) { Toast.error(ctx, 'Failed'); }
           }),
         ]),
@@ -760,6 +911,8 @@ class _MemberDetailScreenState extends ConsumerState<MemberDetailScreen> {
         padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
         child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [IconBadge(Icons.edit_rounded, color: AppTheme.brand), const SizedBox(width: 12), Text('Edit Member', style: context.typo.titleLarge)]),
+          const SizedBox(height: 14),
+          OutlinedButton.icon(onPressed: () { Navigator.pop(ctx); _showPhotoOptions(); }, icon: const Icon(Icons.camera_alt_rounded, size: 18), label: const Text('Edit Profile Photo')),
           const SizedBox(height: 18),
           TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Full Name*', prefixIcon: Icon(Icons.person_outline_rounded))),
           const SizedBox(height: 12),
@@ -802,22 +955,53 @@ class _MemberDetailScreenState extends ConsumerState<MemberDetailScreen> {
   }
 
   Future<void> _hardDelete() async {
-    final confirm1 = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(
-      title: const Text('Delete Member?'),
-      content: const Text('This will delete member + invoices, payments, attendance, health, lockers, workouts. Cannot be undone.'),
-      actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')), ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: AppTheme.danger), onPressed: () => Navigator.pop(ctx, true), child: const Text('Delete'))],
-    ));
+    final confirm1 = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete Member?'),
+        content: const Text('This will delete member + invoices, payments, attendance, health, lockers, workouts. Cannot be undone.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.danger),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
     if (confirm1 != true) return;
-    final confirm2 = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(
-      title: const Text('Final confirmation'),
-      content: const Text('Are you absolutely sure? This action is permanent.'),
-      actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')), ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: AppTheme.danger), onPressed: () => Navigator.pop(ctx, true), child: const Text('Yes, Delete'))],
-    ));
+
+    final confirm2 = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Final confirmation'),
+        content: const Text('Are you absolutely sure? This action is permanent.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.danger),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Yes, Delete'),
+          ),
+        ],
+      ),
+    );
     if (confirm2 != true) return;
+
     try {
-      // Laravel REST: DELETE /v1/members/{id}/hard
       await ref.read(apiClientProvider).hardDeleteMember(widget.memberId);
-      if (mounted) { Toast.success(context, 'Member deleted'); Navigator.pop(context); }
-    } catch (e) { if (mounted) Toast.error(context, 'Failed to delete'); }
+      if (mounted) {
+        Toast.success(context, 'Member deleted');
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      if (mounted) {
+        final message = e.toString().contains('Permission denied')
+            ? 'Your role does not allow deleting members. Please contact your Gym Owner.'
+            : 'Failed to delete member';
+        Toast.error(context, message);
+      }
+    }
   }
 }

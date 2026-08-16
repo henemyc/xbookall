@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\BaseController;
 use App\Models\AppNotification;
 use App\Models\User;
+use App\Services\NotificationDeliveryService;
 use Illuminate\Http\Request;
 
 class NotificationController extends BaseController
@@ -33,7 +34,8 @@ class NotificationController extends BaseController
 
         $notifications = $query->paginate(30);
 
-        return view('admin.notifications.index', compact('notifications', 'search', 'type'));
+        $gyms = User::where('type', 'admin')->where('is_active', true)->orderBy('name')->get(['id', 'name', 'email']);
+        return view('admin.notifications.index', compact('notifications', 'search', 'type', 'gyms'));
     }
 
     /**
@@ -45,31 +47,24 @@ class NotificationController extends BaseController
             'title' => 'required|string|max:255',
             'message' => 'required|string',
             'type' => 'required|in:info,warning,error,success',
+            'gym_ids' => 'nullable|array',
+            'gym_ids.*' => 'integer|exists:users,id',
         ]);
 
-        // Get all gym admins
+        // Send to all active gyms, or an explicitly selected set of active gyms.
+        $selectedGymIds = collect($request->input('gym_ids', []))->filter()->map(fn ($id) => (int) $id)->unique()->values();
         $gyms = User::where('type', 'admin')
-            ->where('parent_id', 1)
             ->where('is_active', true)
+            ->when($selectedGymIds->isNotEmpty(), fn ($q) => $q->whereIn('id', $selectedGymIds))
             ->get();
 
         $count = 0;
+        $delivery = app(NotificationDeliveryService::class);
         foreach ($gyms as $gym) {
-            // PURE RAW INSERT - never Eloquent create (avoids updated_at)
-            try {
-                \DB::insert(
-                    "INSERT INTO app_notifications (parent_id, user_id, title, message, type) VALUES (?, ?, ?, ?, ?)",
-                    [
-                        $gym->id,
-                        null,
-                        $request->title,
-                        $request->message,
-                        $request->type,
-                    ]
-                );
-            } catch (\Throwable $e) {
-                \Log::warning('Broadcast notification skipped: ' . $e->getMessage());
-            }
+            $delivery->notifyGymOwner($gym->id, $request->title, $request->message, $request->type, [
+                'source' => 'super_admin',
+                'category' => 'super_admin',
+            ]);
             $count++;
         }
 

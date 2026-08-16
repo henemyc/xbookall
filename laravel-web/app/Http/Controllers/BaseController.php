@@ -182,10 +182,31 @@ class BaseController extends Controller
         return $user && $user->type === 'trainee';
     }
 
+    /**
+     * Gym business owner access. Keep legacy `owner` accounts compatible.
+     * Do not use isAdmin() for owner-only authorization because it also
+     * includes staff for legacy application behaviour.
+     */
+    protected function isGymOwner(): bool
+    {
+        $user = $this->currentUser();
+        return $user && in_array($user->type, ['admin', 'owner'], true);
+    }
+
     protected function isStaff(): bool
     {
         $user = $this->currentUser();
         return $user && $user->type === 'staff';
+    }
+
+    /**
+     * Owner/admin has full gym access. A staff account needs the exact
+     * permission. Trainers and trainees never pass this business-action check.
+     */
+    protected function canPerformGymAction(string $permission): bool
+    {
+        return $this->isGymOwner()
+            || ($this->isStaff() && $this->hasStaffPermission($permission));
     }
 
     protected function staffPermissionKeys(): array

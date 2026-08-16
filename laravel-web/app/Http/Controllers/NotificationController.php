@@ -5,7 +5,9 @@ namespace App\Http\Controllers;
 use App\Models\AppNotification;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Schema;
 
+// UX Batch 2: non-owner users receive only own/private or public broadcast notifications.
 class NotificationController extends BaseController
 {
     /**
@@ -14,23 +16,34 @@ class NotificationController extends BaseController
     public function index(Request $request): JsonResponse
     {
         $parentIds = $this->getGymParentIds();
-        $userId = (int) ($this->currentUser()?->id ?? 0);
+        $currentUser = $this->currentUser();
+        $userId = (int) ($currentUser?->id ?? 0);
 
-        $scope = function ($q) use ($parentIds, $userId) {
-            $q->whereIn('parent_id', $parentIds);
-            if ($userId > 0) {
-                $q->orWhere('user_id', $userId);
-            }
+        $scope = function ($q) use ($parentIds, $userId, $currentUser) {
+            $q->where(function ($inner) use ($parentIds, $userId, $currentUser) {
+                if ($currentUser && !in_array($currentUser->type, ['admin', 'owner'], true)) {
+                    $inner->where('user_id', $userId)
+                        ->orWhere(function ($broadcast) use ($parentIds) {
+                            $broadcast->whereNull('user_id')->whereIn('parent_id', $parentIds);
+                        });
+                    return;
+                }
+                $inner->whereIn('parent_id', $parentIds);
+                if ($userId > 0) $inner->orWhere('user_id', $userId);
+            });
         };
 
+        // Old production installs can lack timestamps on app_notifications.
+        $orderColumn = Schema::hasColumn('app_notifications', 'created_at') ? 'created_at' : 'id';
         $notifications = AppNotification::where($scope)
-            ->orderBy('created_at', 'desc')
+            ->orderBy($orderColumn, 'desc')
             ->limit(50)
             ->get();
 
-        $unreadCount = AppNotification::where($scope)
-            ->where('is_read', false)
-            ->count();
+        $unreadQuery = AppNotification::where($scope);
+        $unreadCount = Schema::hasColumn('app_notifications', 'is_read')
+            ? $unreadQuery->where('is_read', false)->count()
+            : $unreadQuery->count();
 
         return $this->success([
             'notifications' => $notifications,
@@ -44,10 +57,18 @@ class NotificationController extends BaseController
     public function markRead(int $id): JsonResponse
     {
         $parentIds = $this->getGymParentIds();
-        $userId = (int) ($this->currentUser()?->id ?? 0);
+        $currentUser = $this->currentUser();
+        $userId = (int) ($currentUser?->id ?? 0);
 
         $notification = AppNotification::where('id', $id)
-            ->where(function ($q) use ($parentIds, $userId) {
+            ->where(function ($q) use ($parentIds, $userId, $currentUser) {
+                if ($currentUser && !in_array($currentUser->type, ['admin', 'owner'], true)) {
+                    $q->where('user_id', $userId)
+                        ->orWhere(function ($broadcast) use ($parentIds) {
+                            $broadcast->whereNull('user_id')->whereIn('parent_id', $parentIds);
+                        });
+                    return;
+                }
                 $q->whereIn('parent_id', $parentIds);
                 if ($userId > 0) $q->orWhere('user_id', $userId);
             })
@@ -56,7 +77,9 @@ class NotificationController extends BaseController
             return $this->error('Notification not found', 404);
         }
 
-        $notification->update(['is_read' => true]);
+        if (Schema::hasColumn('app_notifications', 'is_read')) {
+            $notification->update(['is_read' => true]);
+        }
 
         return $this->success([], 'Marked as read');
     }
@@ -67,10 +90,18 @@ class NotificationController extends BaseController
     public function destroy(int $id): JsonResponse
     {
         $parentIds = $this->getGymParentIds();
-        $userId = (int) ($this->currentUser()?->id ?? 0);
+        $currentUser = $this->currentUser();
+        $userId = (int) ($currentUser?->id ?? 0);
 
         $notification = AppNotification::where('id', $id)
-            ->where(function ($q) use ($parentIds, $userId) {
+            ->where(function ($q) use ($parentIds, $userId, $currentUser) {
+                if ($currentUser && !in_array($currentUser->type, ['admin', 'owner'], true)) {
+                    $q->where('user_id', $userId)
+                        ->orWhere(function ($broadcast) use ($parentIds) {
+                            $broadcast->whereNull('user_id')->whereIn('parent_id', $parentIds);
+                        });
+                    return;
+                }
                 $q->whereIn('parent_id', $parentIds);
                 if ($userId > 0) $q->orWhere('user_id', $userId);
             })
@@ -92,7 +123,15 @@ class NotificationController extends BaseController
         $parentIds = $this->getGymParentIds();
         $userId = (int) ($this->currentUser()?->id ?? 0);
 
-        AppNotification::where(function ($q) use ($parentIds, $userId) {
+        $currentUser = $this->currentUser();
+        AppNotification::where(function ($q) use ($parentIds, $userId, $currentUser) {
+            if ($currentUser && !in_array($currentUser->type, ['admin', 'owner'], true)) {
+                $q->where('user_id', $userId)
+                    ->orWhere(function ($broadcast) use ($parentIds) {
+                        $broadcast->whereNull('user_id')->whereIn('parent_id', $parentIds);
+                    });
+                return;
+            }
             $q->whereIn('parent_id', $parentIds);
             if ($userId > 0) $q->orWhere('user_id', $userId);
         })->delete();

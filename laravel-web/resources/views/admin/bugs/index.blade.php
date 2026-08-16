@@ -14,6 +14,9 @@
 </div>
 
 <div class="table-card">
+    <form id="bulkBugForm" action="{{ route('admin.bugs.bulk') }}" method="POST">
+        @csrf
+    </form>
     <div class="d-flex justify-content-between align-items-center mb-3">
         <form class="d-flex" method="GET">
             <input type="text" name="search" value="{{ request('search') }}" class="form-control form-control-sm" placeholder="Search title, gym or email..." style="width: 280px;">
@@ -21,13 +24,24 @@
                 <i class="bi bi-search"></i>
             </button>
         </form>
-        <span class="text-muted small">{{ $reports->total() }} reports</span>
+        <div class="d-flex align-items-center gap-2">
+            <select class="form-select form-select-sm" form="bulkBugForm" name="action" id="bulkBugAction" style="width:170px">
+                <option value="">Bulk action...</option>
+                <option value="open">Mark Open</option>
+                <option value="in_progress">Mark In Progress</option>
+                <option value="resolved">Mark Resolved</option>
+                <option value="delete">Delete Selected</option>
+            </select>
+            <button class="btn btn-sm btn-outline-primary" form="bulkBugForm" id="applyBulkBugs" type="submit">Apply</button>
+            <span class="text-muted small">{{ $reports->total() }} reports</span>
+        </div>
     </div>
 
     <div class="table-responsive">
         <table class="table align-middle">
             <thead>
                 <tr>
+                    <th width="35"><input type="checkbox" id="selectAllBugs"></th>
                     <th>ID</th>
                     <th>Gym / User</th>
                     <th>Title</th>
@@ -40,6 +54,7 @@
             <tbody>
                 @forelse($reports as $report)
                 <tr>
+                    <td><input class="form-check-input bug-checkbox" form="bulkBugForm" type="checkbox" name="ids[]" value="{{ $report->id }}"></td>
                     <td>#{{ $report->id }}</td>
                     <td>
                         <div>
@@ -81,7 +96,7 @@
                 </tr>
                 @empty
                 <tr>
-                    <td colspan="7" class="text-center py-5 text-muted">
+                    <td colspan="8" class="text-center py-5 text-muted">
                         No bug reports found.
                     </td>
                 </tr>
@@ -94,4 +109,19 @@
         {{ $reports->links() }}
     </div>
 </div>
+
+@push('scripts')
+<script>
+const selectAllBugs = document.getElementById('selectAllBugs');
+selectAllBugs?.addEventListener('change', function () {
+    document.querySelectorAll('.bug-checkbox').forEach(box => box.checked = this.checked);
+});
+document.getElementById('bulkBugForm')?.addEventListener('submit', function (event) {
+    const selected = document.querySelectorAll('.bug-checkbox:checked').length;
+    const action = document.getElementById('bulkBugAction').value;
+    if (!selected || !action) { event.preventDefault(); alert('Select at least one bug report and a bulk action.'); return; }
+    if (action === 'delete' && !confirm('Delete selected bug reports permanently?')) event.preventDefault();
+});
+</script>
+@endpush
 @endsection

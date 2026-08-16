@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:gymxbook/core/widgets/ui.dart';
 import 'package:gymxbook/features/auth/providers/auth_provider.dart';
+import 'package:gymxbook/core/providers/permission_provider.dart';
 import '../providers/notices_provider.dart';
 
+// Phase 3: staff notice actions use the shared permission provider.
 class NoticesListScreen extends ConsumerStatefulWidget {
   final bool standalone;
   const NoticesListScreen({super.key, this.standalone = false});
@@ -22,7 +24,10 @@ class _NoticesListScreenState extends ConsumerState<NoticesListScreen> {
   Widget build(BuildContext context) {
     final state = ref.watch(noticesProvider);
     final auth = ref.watch(authProvider);
-    final isAdmin = (auth.user?['type'] == 'admin' || auth.user?['type'] == 'owner');
+    final permissions = ref.watch(permissionProvider);
+    final canCreate = permissions.can('notices.create');
+    final canEdit = permissions.can('notices.edit');
+    final canDelete = permissions.can('notices.delete');
 
     return Scaffold(
       appBar: widget.standalone ? AppBar(title: const Text('Notices')) : null,
@@ -35,9 +40,9 @@ class _NoticesListScreenState extends ConsumerState<NoticesListScreen> {
                   ? EmptyState(
                       icon: Icons.campaign_rounded,
                       title: 'No notices',
-                      subtitle: isAdmin ? 'Post announcements for your members' : 'No announcements yet',
-                      actionLabel: isAdmin ? 'Add Notice' : null,
-                      onAction: isAdmin ? _showAddSheet : null,
+                      subtitle: canCreate ? 'Post announcements for your members' : 'No announcements yet',
+                      actionLabel: canCreate ? 'Add Notice' : null,
+                      onAction: canCreate ? _showAddSheet : null,
                     )
                   : RefreshIndicator(
                       color: AppTheme.brand,
@@ -56,11 +61,11 @@ class _NoticesListScreenState extends ConsumerState<NoticesListScreen> {
                                 const SizedBox(width: 10),
                                 Expanded(child: Text(n.title, style: context.typo.titleMedium)),
                                 // Only show edit/delete for admins
-                                if (isAdmin)
+                                if (canEdit || canDelete)
                                   PopupMenuButton<String>(
                                     icon: Icon(Icons.more_vert_rounded, size: 20, color: context.tokens.textTertiary),
-                                    onSelected: (v) { if (v == 'edit') _showEditSheet(n); if (v == 'delete') _confirmDelete(n.id); },
-                                    itemBuilder: (_) => const [PopupMenuItem(value: 'edit', child: Text('Edit')), PopupMenuItem(value: 'delete', child: Text('Delete', style: TextStyle(color: AppTheme.danger)))],
+                                    onSelected: (v) { if (v == 'edit' && canEdit) _showEditSheet(n); if (v == 'delete' && canDelete) _confirmDelete(n.id); },
+                                    itemBuilder: (_) => [if (canEdit) const PopupMenuItem(value: 'edit', child: Text('Edit')), if (canDelete) const PopupMenuItem(value: 'delete', child: Text('Delete', style: TextStyle(color: AppTheme.danger)))],
                                   ),
                               ]),
                               if (n.description.isNotEmpty) ...[const SizedBox(height: 10), Text(n.description, style: context.typo.bodyMedium?.copyWith(height: 1.5))],
@@ -72,8 +77,8 @@ class _NoticesListScreenState extends ConsumerState<NoticesListScreen> {
                       ),
                     ),
       // Only show FAB for admins
-      floatingActionButtonLocation: isAdmin ? const AboveNavFabLocation() : null,
-      floatingActionButton: isAdmin
+      floatingActionButtonLocation: canCreate ? const AboveNavFabLocation() : null,
+      floatingActionButton: canCreate
           ? FloatingActionButton.extended(onPressed: _showAddSheet, icon: const Icon(Icons.add_rounded), label: const Text('Add Notice', style: TextStyle(fontWeight: FontWeight.w700)), backgroundColor: AppTheme.brand)
           : null,
     );

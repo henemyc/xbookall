@@ -8,6 +8,7 @@ use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
+use App\Services\PhoneIdentityService;
 
 class PanelStaffUserController extends BaseController
 {
@@ -93,8 +94,8 @@ class PanelStaffUserController extends BaseController
             return back()->withInput()->with('error', 'Phone must be a valid 10-digit Indian mobile number');
         }
 
-        if (User::where('type', 'staff')->where('parent_id', $pid)->where('phone_number', $phone)->exists()) {
-            return back()->withInput()->with('error', 'A staff user with this phone number already exists');
+        if (!app(PhoneIdentityService::class)->isAvailable($phone)) {
+            return back()->withInput()->with('error', PhoneIdentityService::DUPLICATE_MESSAGE);
         }
 
         $email = trim((string) ($data['email'] ?? ''));
@@ -168,8 +169,8 @@ class PanelStaffUserController extends BaseController
             return back()->withInput()->with('error', 'Phone must be a valid 10-digit Indian mobile number');
         }
 
-        if (User::where('type', 'staff')->where('parent_id', $pid)->where('phone_number', $phone)->where('id', '!=', $staff->id)->exists()) {
-            return back()->withInput()->with('error', 'A staff user with this phone number already exists');
+        if (!app(PhoneIdentityService::class)->isAvailable($phone, (int) $staff->id)) {
+            return back()->withInput()->with('error', PhoneIdentityService::DUPLICATE_MESSAGE);
         }
 
         $email = trim((string) ($data['email'] ?? ''));
@@ -180,6 +181,7 @@ class PanelStaffUserController extends BaseController
 
         $before = $staff->toArray();
 
+        $roleChanged = (int) $staff->staff_role_id !== (int) $role->id;
         $staff->update([
             'name' => trim($data['name']),
             'email' => $email,
@@ -187,6 +189,9 @@ class PanelStaffUserController extends BaseController
             'staff_role_id' => $role->id,
             'is_active' => (int) ($data['is_active'] ?? 1) === 1,
         ]);
+        if ($roleChanged) {
+            $staff->tokens()->delete();
+        }
 
         $this->logActivity('staff', 'updated', 'users', $staff->id, 'Updated staff user ' . $staff->name, $before, $staff->fresh());
 

@@ -61,7 +61,8 @@
         </div>
     </div>
 
-    <!-- GYM / BUSINESS PROFILE -->
+    <!-- GYM / BUSINESS PROFILE: strictly Gym Owner/Admin only -->
+    @if($isGymOwner)
     <div class="col-lg-7">
         <div class="table-card h-100">
             <div class="d-flex align-items-center mb-3">
@@ -108,6 +109,7 @@
             </form>
         </div>
     </div>
+    @endif
 
     <!-- SECURITY & PASSWORD -->
     <div class="col-12">

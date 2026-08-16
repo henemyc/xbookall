@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:gymxbook/core/widgets/ui.dart';
 import 'package:gymxbook/core/utils/date_formatter.dart';
 import 'package:gymxbook/features/auth/providers/auth_provider.dart';
+import 'package:gymxbook/features/diets/screens/assign_member_diet_screen.dart';
 
 class TrainerMembersScreen extends ConsumerStatefulWidget {
   const TrainerMembersScreen({super.key});
@@ -169,6 +170,15 @@ class _TrainerMembersScreenState extends ConsumerState<TrainerMembersScreen> {
             _infoTile(Icons.event_rounded, 'Expiry', DateFormatter.formatDate(member['membership_expiry_date']?.toString())),
             _infoTile(Icons.flag_rounded, 'Fitness Goal', (member['fitness_goal'] ?? '').toString().isEmpty ? 'Not set' : member['fitness_goal'].toString()),
             if ((member['address'] ?? '').toString().isNotEmpty) _infoTile(Icons.location_on_rounded, 'Address', member['address'].toString()),
+            const SizedBox(height: 18),
+            FireButton(
+              label: 'Assign Diet Plan',
+              icon: Icons.restaurant_menu_rounded,
+              onPressed: () async {
+                final result = await Navigator.push(context, MaterialPageRoute(builder: (_) => AssignMemberDietScreen(memberId: int.parse(member['id'].toString()), memberName: member['name']?.toString() ?? 'Member')));
+                if (result == true && context.mounted) Toast.success(context, 'Diet plan assigned');
+              },
+            ),
             const SizedBox(height: 18),
             Text('Recent Attendance', style: context.typo.titleMedium),
             const SizedBox(height: 10),

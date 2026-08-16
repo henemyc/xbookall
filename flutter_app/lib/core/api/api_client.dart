@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:dio/dio.dart';
@@ -21,8 +22,10 @@ class ApiClient {
   // Token: Authorization: Bearer
   // ========================================================
   static const String baseUrl = 'https://web.gymxbook.com/api';
-  static const String appVersion = '1.1.1';
+  static const String appVersion = '1.2.0';
   static String? _cachedToken;
+  static final StreamController<void> _authExpiredController = StreamController<void>.broadcast();
+  static Stream<void> get authExpired => _authExpiredController.stream;
 
   late final Dio _dio;
   final FlutterSecureStorage _storage = const FlutterSecureStorage();
@@ -62,6 +65,23 @@ class ApiClient {
         return handler.next(response);
       },
       onError: (DioException e, handler) {
+        // A real protected-route auth failure invalidates the session globally.
+        // The AuthNotifier listens to this stream and returns the whole app to
+        // LoginScreen instead of leaving stale pages reachable with empty data.
+        final status = e.response?.statusCode;
+        final path = e.requestOptions.path;
+        if (status == 401 && !path.endsWith('/login')) {
+          _authExpiredController.add(null);
+        } else if (status == 403) {
+          // Keep the server response intact, but make every Flutter screen
+          // show a useful explanation instead of a generic failed message.
+          e = DioException(
+            requestOptions: e.requestOptions,
+            response: e.response,
+            type: e.type,
+            error: 'Permission denied. Your role does not allow this action. Please contact your Gym Owner.',
+          );
+        }
         // User-friendly connection errors
         if (e.type == DioExceptionType.connectionTimeout ||
             e.type == DioExceptionType.receiveTimeout ||
@@ -108,6 +128,16 @@ class ApiClient {
   // ─────────────────────────────────────────────────────────────
   // PHASE 1: Authentication (Laravel REST)
   // ─────────────────────────────────────────────────────────────
+
+  Future<Map<String, dynamic>> sendLoginOtp({required String phone}) async {
+    final res = await postV1('/login/send-otp', data: {'phone': phone});
+    return _unwrap(res.data);
+  }
+
+  Future<Map<String, dynamic>> verifyLoginOtp({required String phone, required String otp}) async {
+    final res = await postV1('/login/verify-otp', data: {'phone': phone, 'otp': otp});
+    return _unwrap(res.data);
+  }
 
   Future<Map<String, dynamic>> login({required String email, required String password}) async {
     try {
@@ -180,17 +210,25 @@ class ApiClient {
   Future<Map<String, dynamic>> register({
     required String businessName,
     required String name,
-    required String email,
+    String? email,
     required String phone,
     required String password,
+    String? address,
+    String? city,
+    required String acquisitionSource,
+    String? acquisitionDetail,
   }) async {
     try {
       final res = await postV1('/register', data: {
         'business_name': businessName,
         'name': name,
-        'email': email,
+        'email': email ?? '',
         'phone_number': phone,
         'password': password,
+        'address': address ?? '',
+        'city': city ?? '',
+        'acquisition_source': acquisitionSource,
+        'acquisition_detail': acquisitionDetail ?? '',
       });
 
       final rawData = res.data;
@@ -309,6 +347,35 @@ class ApiClient {
 
   Future<Map<String, dynamic>> trackAppOpen() async {
     final res = await postV1('/track-app-open');
+    return _unwrap(res.data);
+  }
+
+  Future<Map<String, dynamic>> registerDeviceToken({
+    required String token,
+    required String platform,
+    required String installationId,
+  }) async {
+    final res = await postV1('/device-tokens', data: {
+      'token': token,
+      'installation_id': installationId,
+      'platform': platform,
+      'app_version': appVersion,
+    });
+    return _unwrap(res.data);
+  }
+
+  Future<Map<String, dynamic>> unregisterDeviceToken(String token) async {
+    final res = await deleteV1('/device-tokens', data: {'token': token});
+    return _unwrap(res.data);
+  }
+
+  Future<Map<String, dynamic>> getNotificationPreferences() async {
+    final res = await getV1('/notification-preferences');
+    return _unwrap(res.data);
+  }
+
+  Future<Map<String, dynamic>> updateNotificationPreferences(Map<String, dynamic> data) async {
+    final res = await putV1('/notification-preferences', data: data);
     return _unwrap(res.data);
   }
 
@@ -557,8 +624,13 @@ class ApiClient {
     return _unwrap(res.data);
   }
 
-  Future<Map<String, dynamic>> getWorkouts() async {
-    final res = await getV1('/workouts');
+  Future<Map<String, dynamic>> getWorkouts({int? userId}) async {
+    final res = await getV1('/workouts', query: userId == null ? null : {'user_id': userId});
+    return _unwrap(res.data);
+  }
+
+  Future<Map<String, dynamic>> updateWorkout(int id, Map<String, dynamic> data) async {
+    final res = await putV1('/workouts/$id', data: data);
     return _unwrap(res.data);
   }
 
@@ -818,6 +890,52 @@ class ApiClient {
     return _unwrap(res.data);
   }
 
+  // D4/D5 Diet management APIs.
+  Future<Map<String, dynamic>> getDietTemplates() async {
+    final res = await getV1('/diet-templates');
+    return _unwrap(res.data);
+  }
+
+  Future<Map<String, dynamic>> createDietTemplate(Map<String, dynamic> data) async {
+    final res = await postV1('/diet-templates', data: data);
+    return _unwrap(res.data);
+  }
+
+  Future<Map<String, dynamic>> updateDietTemplate(int id, Map<String, dynamic> data) async {
+    final res = await putV1('/diet-templates/$id', data: data);
+    return _unwrap(res.data);
+  }
+
+  Future<Map<String, dynamic>> deleteDietTemplate(int id) async {
+    final res = await deleteV1('/diet-templates/$id');
+    return _unwrap(res.data);
+  }
+
+  Future<Map<String, dynamic>> getMemberDiets(int memberId) async {
+    final res = await getV1('/members/$memberId/diets');
+    return _unwrap(res.data);
+  }
+
+  Future<Map<String, dynamic>> assignMemberDiet(int memberId, Map<String, dynamic> data) async {
+    final res = await postV1('/members/$memberId/diets', data: data);
+    return _unwrap(res.data);
+  }
+
+  Future<Map<String, dynamic>> updateMemberDiet(int id, Map<String, dynamic> data) async {
+    final res = await putV1('/member-diets/$id', data: data);
+    return _unwrap(res.data);
+  }
+
+  Future<Map<String, dynamic>> deleteMemberDiet(int id) async {
+    final res = await deleteV1('/member-diets/$id');
+    return _unwrap(res.data);
+  }
+
+  Future<Map<String, dynamic>> getMyDiet() async {
+    final res = await getV1('/my-diet');
+    return _unwrap(res.data);
+  }
+
   // Lockers
   Future<Map<String, dynamic>> getLockers() async {
     final res = await getV1('/lockers');
@@ -896,6 +1014,31 @@ class ApiClient {
     return _unwrap(res.data);
   }
 
+  // Profile photo uploads (multipart; backend storage disk may be public or S3).
+  Future<Map<String, dynamic>> uploadMyProfilePhoto(File file) async {
+    final res = await postV1('/profile/photo', data: FormData.fromMap({
+      'photo': await MultipartFile.fromFile(file.path, filename: file.uri.pathSegments.last),
+    }));
+    return _unwrap(res.data);
+  }
+
+  Future<Map<String, dynamic>> removeMyProfilePhoto() async {
+    final res = await deleteV1('/profile/photo');
+    return _unwrap(res.data);
+  }
+
+  Future<Map<String, dynamic>> uploadMemberPhoto(int memberId, File file) async {
+    final res = await postV1('/members/$memberId/photo', data: FormData.fromMap({
+      'photo': await MultipartFile.fromFile(file.path, filename: file.uri.pathSegments.last),
+    }));
+    return _unwrap(res.data);
+  }
+
+  Future<Map<String, dynamic>> removeMemberPhoto(int memberId) async {
+    final res = await deleteV1('/members/$memberId/photo');
+    return _unwrap(res.data);
+  }
+
   // Settings
   Future<Map<String, dynamic>> getSettings() async {
     final res = await getV1('/settings');
@@ -904,6 +1047,12 @@ class ApiClient {
 
   Future<Map<String, dynamic>> updateSettings(Map<String, dynamic> data) async {
     final res = await postV1('/settings', data: data);
+    return _unwrap(res.data);
+  }
+
+  // Personal account profile (not gym/platform settings).
+  Future<Map<String, dynamic>> updateProfile(Map<String, dynamic> data) async {
+    final res = await putV1('/update-profile', data: data);
     return _unwrap(res.data);
   }
 

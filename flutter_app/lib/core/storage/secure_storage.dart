@@ -11,6 +11,9 @@ class SecureStorage {
   );
 
   static const String _installGuardKey = 'install_guard_v2';
+  static const String _authSchemaKey = 'auth_session_schema';
+  static const String _authNoticeKey = 'auth_session_notice';
+  static const String _currentAuthSchema = '2';
 
   /// Prevent Android Auto Backup / restored SharedPreferences from keeping an
   /// old login after the app is uninstalled and installed again.
@@ -48,6 +51,47 @@ class SecureStorage {
         await prefs.remove('user_name');
         await prefs.remove('user_email');
       } catch (_) {}
+    }
+  }
+
+  /// Clears only authentication/session keys. Theme, onboarding and the auth
+  /// schema marker remain untouched so logout never causes a repeated migration.
+  static Future<void> clearAuthSession({String? notice}) async {
+    const authKeys = ['api_token', 'user_id', 'user_type', 'user_name', 'user_email'];
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      for (final key in authKeys) {
+        try { await _storage.delete(key: key); } catch (_) {}
+        await prefs.remove(key);
+      }
+      if (notice != null && notice.isNotEmpty) {
+        await prefs.setString(_authNoticeKey, notice);
+      }
+    } catch (_) {}
+  }
+
+  /// One-time compatibility migration for releases that change session/tenant
+  /// behavior. Bump [_currentAuthSchema] deliberately for a future forced re-login.
+  static Future<void> enforceAuthSessionSchema() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getString(_authSchemaKey) == _currentAuthSchema) return;
+      final hadSession = await getToken() != null;
+      await clearAuthSession(notice: hadSession ? 'GymXBook has been updated. Please login again to continue.' : null);
+      await prefs.setString(_authSchemaKey, _currentAuthSchema);
+    } catch (_) {
+      await clearAuthSession();
+    }
+  }
+
+  static Future<String?> consumeAuthNotice() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final notice = prefs.getString(_authNoticeKey);
+      if (notice != null) await prefs.remove(_authNoticeKey);
+      return notice;
+    } catch (_) {
+      return null;
     }
   }
 
@@ -131,18 +175,8 @@ class SecureStorage {
   }
 
   static Future<void> clear() async {
-    try {
-      final marker = await _storage.read(key: _installGuardKey);
-      await _storage.deleteAll();
-      if (marker != null && marker.isNotEmpty) {
-        await _storage.write(key: _installGuardKey, value: marker);
-      }
-    } catch (_) {}
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.clear();
-    } catch (_) {}
-    print('SecureStorage: Cleared all login data');
+    await clearAuthSession();
+    print('SecureStorage: Cleared auth session data');
   }
 
   static Future<bool> isLoggedIn() async {

@@ -269,6 +269,27 @@ class BugReportController extends BaseController
             ->with('success', 'Bug report updated. User has been notified.');
     }
 
+    public function bulkAction(Request $request)
+    {
+        $data = $request->validate([
+            'ids' => 'required|array|min:1',
+            'ids.*' => 'integer|exists:bug_reports,id',
+            'action' => 'required|in:open,in_progress,resolved,delete',
+        ]);
+
+        $reports = BugReport::whereIn('id', $data['ids'])->get();
+        if ($data['action'] === 'delete') {
+            BugReport::whereIn('id', $reports->pluck('id'))->delete();
+            return redirect()->route('admin.bugs.index')->with('success', $reports->count() . ' bug reports deleted');
+        }
+
+        foreach ($reports as $report) {
+            $report->update(['status' => $data['action']]);
+            $this->notifyBugReportUser($report, ['status' => $data['action'], 'admin_notes' => null]);
+        }
+        return redirect()->route('admin.bugs.index')->with('success', $reports->count() . ' bug reports updated');
+    }
+
     private function notifyBugReportUser(BugReport $report, array $validated): void
     {
         if (!$report->user_id) return;

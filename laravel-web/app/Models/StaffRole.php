@@ -88,6 +88,13 @@ class StaffRole extends Model
                 'workouts.edit' => 'Edit workout plans/activities',
                 'workouts.delete' => 'Delete workout plans/activities',
             ],
+            'Diet Management' => [
+                'diets.view' => 'View diet templates and assigned diets',
+                'diets.create' => 'Create diet templates',
+                'diets.edit' => 'Edit diet templates and assigned diets',
+                'diets.delete' => 'Delete diet templates and assigned diets',
+                'diets.assign' => 'Assign diet plans to members',
+            ],
             'Invoices' => [
                 'invoices.view' => 'View invoices',
                 'invoices.create' => 'Create invoices',

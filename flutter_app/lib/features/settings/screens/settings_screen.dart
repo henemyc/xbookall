@@ -1,8 +1,11 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:image_cropper/image_cropper.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:gymxbook/core/widgets/ui.dart';
 import 'package:gymxbook/core/theme/theme_provider.dart';
@@ -13,9 +16,10 @@ import 'package:gymxbook/features/subscription/screens/subscription_screen.dart'
 import 'package:gymxbook/features/qr/screens/admin_qr_screen.dart';
 import 'package:gymxbook/features/notices/screens/notices_list_screen.dart';
 import 'package:gymxbook/features/notifications/screens/notifications_screen.dart';
+import 'package:gymxbook/features/notifications/screens/notification_preferences_screen.dart';
 
 class SettingsScreen extends ConsumerWidget {
-  static const String currentAppVersion = '1.1.1';
+  static const String currentAppVersion = '1.2.0';
 
   const SettingsScreen({super.key});
 
@@ -34,7 +38,7 @@ class SettingsScreen extends ConsumerWidget {
             padding: const EdgeInsets.all(18),
             decoration: BoxDecoration(gradient: AppTheme.darkHeroGradient, borderRadius: BorderRadius.circular(24)),
             child: Row(children: [
-              GxAvatar(name: user?['name'] ?? 'A', size: 58),
+              GxAvatar(name: user?['name'] ?? 'A', imageUrl: user?['profile_photo_url']?.toString(), size: 58),
               const SizedBox(width: 14),
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text(user?['name'] ?? 'Admin', style: context.typo.titleLarge?.copyWith(color: Colors.white)),
@@ -64,6 +68,7 @@ class SettingsScreen extends ConsumerWidget {
           _group(context, 'Account & Security', [
             _item(context, Icons.person_rounded, AppTheme.brand, 'Personal Profile', 'Name, email and phone', () => _showProfileSheet(context, ref)),
             _item(context, Icons.lock_reset_rounded, AppTheme.info, 'Change Password', 'Update login password', () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ChangePasswordScreen()))),
+            _item(context, Icons.notifications_active_rounded, AppTheme.brand, 'Notification Preferences', 'Control push notification categories', () => Navigator.push(context, MaterialPageRoute(builder: (_) => const NotificationPreferencesScreen()))),
           ]),
           if (isAdmin) ...[
             const SizedBox(height: 16),
@@ -78,7 +83,7 @@ class SettingsScreen extends ConsumerWidget {
           ],
           const SizedBox(height: 16),
           _group(context, 'App', [
-            _item(context, Icons.info_outline_rounded, context.tokens.textSecondary, 'Version', '1.1.1', null, trailing: Text('v1.1.1', style: context.typo.bodySmall?.copyWith(color: context.tokens.textTertiary))),
+            _item(context, Icons.info_outline_rounded, context.tokens.textSecondary, 'Version', '1.2.0', null, trailing: Text('v1.2.0', style: context.typo.bodySmall?.copyWith(color: context.tokens.textTertiary))),
           ]),
           const SizedBox(height: 24),
           SizedBox(width: double.infinity, child: OutlinedButton.icon(
@@ -87,7 +92,10 @@ class SettingsScreen extends ConsumerWidget {
               final ok = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(title: const Text('Logout?'), content: const Text('Are you sure you want to logout?'), actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')), ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: AppTheme.danger), onPressed: () => Navigator.pop(ctx, true), child: const Text('Logout'))]));
               if (ok == true) {
                 await ref.read(authProvider.notifier).logout();
-                if (context.mounted) Navigator.of(context).popUntil((route) => route.isFirst);
+                if (context.mounted) {
+                  Toast.success(context, 'Logged out successfully');
+                  Navigator.of(context).popUntil((route) => route.isFirst);
+                }
               }
             },
             icon: const Icon(Icons.logout_rounded),
@@ -220,6 +228,95 @@ class SettingsScreen extends ConsumerWidget {
     );
   }
 
+  Future<void> _pickMyProfilePhoto(BuildContext context, WidgetRef ref, ImageSource source) async {
+    try {
+      final image = await ImagePicker().pickImage(source: source, imageQuality: 82, maxWidth: 1440, maxHeight: 1440);
+      if (image == null) return;
+      final cropped = await ImageCropper().cropImage(
+        sourcePath: image.path,
+        aspectRatio: const CropAspectRatio(ratioX: 1, ratioY: 1),
+        uiSettings: [AndroidUiSettings(toolbarTitle: 'Crop Profile Photo', lockAspectRatio: true)],
+      );
+      if (cropped == null) return;
+      final result = await ref.read(apiClientProvider).uploadMyProfilePhoto(File(cropped.path));
+      ref.read(authProvider.notifier).applyProfilePhoto(
+        profile: result['profile']?.toString(),
+        profilePhotoUrl: result['profile_photo_url']?.toString(),
+      );
+      if (context.mounted) Toast.success(context, 'Profile photo updated');
+    } catch (e) {
+      if (context.mounted) Toast.error(context, _apiError(e, 'Could not update profile photo'));
+    }
+  }
+
+  void _showMyPhotoOptions(BuildContext context, WidgetRef ref) {
+    showAppSheet(context, child: Padding(
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 22),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Text('Profile photo', style: context.typo.titleLarge),
+        const SizedBox(height: 12),
+        ListTile(leading: IconBadge(Icons.camera_alt_rounded, color: AppTheme.brand), title: const Text('Take photo'), onTap: () { Navigator.pop(context); _pickMyProfilePhoto(context, ref, ImageSource.camera); }),
+        ListTile(leading: IconBadge(Icons.photo_library_rounded, color: AppTheme.brand), title: const Text('Choose from gallery'), onTap: () { Navigator.pop(context); _pickMyProfilePhoto(context, ref, ImageSource.gallery); }),
+      ]),
+    ));
+  }
+
+  Future<bool> _verifyNewPhone(BuildContext context, WidgetRef ref, String phone) async {
+    if (!RegExp(r'^[6-9]\d{9}$').hasMatch(phone)) {
+      Toast.error(context, 'Enter a valid 10-digit Indian mobile number');
+      return false;
+    }
+    try {
+      await ref.read(authProvider.notifier).sendOtp(phone);
+    } catch (e) {
+      if (context.mounted) Toast.error(context, _apiError(e, 'Could not send OTP'));
+      return false;
+    }
+    if (!context.mounted) return false;
+    final otp = TextEditingController();
+    bool verifying = false;
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: !verifying,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Verify new phone'),
+          content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('We sent a WhatsApp OTP to $phone.'),
+            const SizedBox(height: 14),
+            TextField(controller: otp, keyboardType: TextInputType.number, maxLength: 6, autofocus: true, decoration: const InputDecoration(labelText: '6-digit OTP')),
+          ]),
+          actions: [
+            TextButton(onPressed: verifying ? null : () => Navigator.pop(context, false), child: const Text('Cancel')),
+            ElevatedButton(
+              onPressed: verifying ? null : () async {
+                if (!RegExp(r'^\d{6}$').hasMatch(otp.text.trim())) { Toast.error(context, 'Enter the 6-digit OTP'); return; }
+                setDialogState(() => verifying = true);
+                try {
+                  await ref.read(authProvider.notifier).verifyOtp(phone, otp.text.trim());
+                  if (context.mounted) Navigator.pop(context, true);
+                } catch (e) {
+                  if (context.mounted) { setDialogState(() => verifying = false); Toast.error(context, _apiError(e, 'Invalid OTP')); }
+                }
+              },
+              child: verifying ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Text('Verify'),
+            ),
+          ],
+        ),
+      ),
+    );
+    otp.dispose();
+    return result == true;
+  }
+
+  String _apiError(Object error, String fallback) {
+    try {
+      final data = (error as dynamic).response?.data;
+      if (data is Map) return (data['error'] ?? data['message'] ?? fallback).toString();
+    } catch (_) {}
+    return fallback;
+  }
+
   void _showProfileSheet(BuildContext context, WidgetRef ref) {
     final auth = ref.read(authProvider);
     final user = auth.user;
@@ -230,6 +327,14 @@ class SettingsScreen extends ConsumerWidget {
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
       child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [IconBadge(Icons.person_rounded, color: AppTheme.brand), const SizedBox(width: 12), Text('Personal Profile', style: context.typo.titleLarge)]),
+        const SizedBox(height: 14),
+        Center(child: Consumer(builder: (context, liveRef, _) {
+          final liveUser = liveRef.watch(authProvider).user;
+          return Pressable(radius: 30, onTap: () => _showMyPhotoOptions(context, ref), child: Stack(clipBehavior: Clip.none, children: [
+            GxAvatar(name: liveUser?['name'] ?? 'U', imageUrl: liveUser?['profile_photo_url']?.toString(), size: 72),
+            Positioned(right: -2, bottom: -2, child: Container(width: 26, height: 26, decoration: BoxDecoration(color: AppTheme.brand, shape: BoxShape.circle, border: Border.all(color: context.tokens.surface, width: 2)), child: const Icon(Icons.camera_alt_rounded, size: 13, color: Colors.white))),
+          ]));
+        })),
         const SizedBox(height: 18),
         TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Full Name', prefixIcon: Icon(Icons.person_outline_rounded))),
         const SizedBox(height: 12),
@@ -239,7 +344,15 @@ class SettingsScreen extends ConsumerWidget {
         const SizedBox(height: 20),
         FireButton(label: 'Update Profile', onPressed: () async {
           try {
-            await ref.read(apiClientProvider).updateSettings({
+            final currentPhone = (user?['phone_number'] ?? '').toString().replaceAll(RegExp(r'[^0-9]'), '').replaceFirst(RegExp(r'^91(?=\d{10}$)'), '');
+            final newPhone = phoneCtrl.text.trim().replaceAll(RegExp(r'[^0-9]'), '').replaceFirst(RegExp(r'^91(?=\d{10}$)'), '');
+            if (newPhone != currentPhone) {
+              final verified = await _verifyNewPhone(context, ref, newPhone);
+              if (!verified) return;
+            }
+            // Personal Profile must use /update-profile. The old code sent
+            // account fields to /settings, so nothing on the user account changed.
+            await ref.read(apiClientProvider).updateProfile({
               'name': nameCtrl.text.trim(),
               'email': emailCtrl.text.trim(),
               'phone_number': phoneCtrl.text.trim(),

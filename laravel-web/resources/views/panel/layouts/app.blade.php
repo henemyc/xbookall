@@ -488,6 +488,9 @@
                 @if($canPanel('workouts.view'))
                 <li class="nav-item"><a class="nav-link {{ request()->routeIs('panel.workouts.activities') ? 'active' : '' }}" href="{{ route('panel.workouts.activities') }}"><i class="bi bi-lightning"></i> Activities</a></li>
                 @endif
+                @if(in_array(auth()->user()->type ?? '', ['admin', 'owner']))
+                <li class="nav-item"><a class="nav-link {{ request()->routeIs('panel.diets.*') ? 'active' : '' }}" href="{{ route('panel.diets.index') }}"><i class="bi bi-egg-fried"></i> Diet Templates</a></li>
+                @endif
                 
                 <div class="nav-section">Account</div>
                 @if($canPanel('subscription.view'))

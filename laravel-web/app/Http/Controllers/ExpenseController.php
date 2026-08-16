@@ -14,6 +14,10 @@ class ExpenseController extends BaseController
      */
     public function index(Request $request): JsonResponse
     {
+        if (!$this->canPerformGymAction('expenses.view')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $parentIds = $this->getGymParentIds();
         $month = $request->get('month', now()->month);
         $year = $request->get('year', now()->year);
@@ -38,6 +42,10 @@ class ExpenseController extends BaseController
      */
     public function store(Request $request): JsonResponse
     {
+        if (!$this->canPerformGymAction('expenses.create')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $parentIds = $this->getGymParentIds();
 
         $request->validate([
@@ -69,6 +77,10 @@ class ExpenseController extends BaseController
      */
     public function update(Request $request, int $id): JsonResponse
     {
+        if (!$this->canPerformGymAction('expenses.edit')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $parentIds = $this->getGymParentIds();
 
         $expense = Expense::where('id', $id)->whereIn('parent_id', $parentIds)->first();
@@ -99,6 +111,10 @@ class ExpenseController extends BaseController
      */
     public function destroy(int $id): JsonResponse
     {
+        if (!$this->canPerformGymAction('expenses.delete')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $parentIds = $this->getGymParentIds();
 
         $expense = Expense::where('id', $id)->whereIn('parent_id', $parentIds)->first();
@@ -116,6 +132,10 @@ class ExpenseController extends BaseController
      */
     public function types(Request $request): JsonResponse
     {
+        if (!$this->canPerformGymAction('expenses.view')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $parentIds = $this->getGymAndGlobalParentIds();
 
         $types = Type::whereIn('parent_id', $parentIds)

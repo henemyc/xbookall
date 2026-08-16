@@ -102,7 +102,7 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
                         StatTile(label: 'Monthly Income', value: '₹${reports!['monthly_income'] ?? 0}', icon: Icons.trending_up_rounded, color: AppTheme.success),
                         StatTile(label: 'Monthly Expense', value: '₹${reports!['monthly_expense'] ?? 0}', icon: Icons.trending_down_rounded, color: AppTheme.danger),
                         // FIX #4: Active Members → tap opens active members
-                        StatTile(label: 'Active Members', value: '${reports!['active_count'] ?? 0}', icon: Icons.verified_rounded, color: AppTheme.brand, onTap: () => _goToMembers('active')),
+                        StatTile(label: 'Due Amount', value: '₹${reports!['due_amount'] ?? 0}', icon: Icons.account_balance_wallet_rounded, color: AppTheme.warning, onTap: () => ref.read(navIndexProvider.notifier).state = 13),
                         // FIX #4: Expired → tap opens expired members
                         StatTile(label: 'Expired', value: '${reports!['expired_count'] ?? 0}', icon: Icons.warning_amber_rounded, color: AppTheme.warning, onTap: () => _goToMembers('expired')),
                       ],

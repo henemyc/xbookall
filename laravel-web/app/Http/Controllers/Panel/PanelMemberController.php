@@ -16,6 +16,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
+use App\Services\PhoneIdentityService;
 
 class PanelMemberController extends BaseController
 {
@@ -109,12 +110,10 @@ class PanelMemberController extends BaseController
                 return response()->json(['success' => false, 'error' => 'Email already exists'], 400);
             }
 
-            $phoneDigits = preg_replace('/[^0-9]/', '', $request->input('phone_number', ''));
-            if (strlen($phoneDigits) == 12 && substr($phoneDigits, 0, 2) == '91') {
-                $phoneDigits = substr($phoneDigits, 2);
-            }
-            if (strlen($phoneDigits) != 10 || !preg_match('/^[6-9][0-9]{9}$/', $phoneDigits)) {
-                return response()->json(['success' => false, 'error' => 'Phone must be 10 digits, starting with 6-9'], 400);
+            try {
+                $phoneDigits = app(PhoneIdentityService::class)->requireAvailable($request->input('phone_number'));
+            } catch (\InvalidArgumentException $e) {
+                return response()->json(['success' => false, 'error' => $e->getMessage()], 400);
             }
 
             DB::beginTransaction();
@@ -264,7 +263,9 @@ class PanelMemberController extends BaseController
             $member->update([
                 'name' => $request->name ?? $member->name,
                 'email' => $request->email ?? $member->email,
-                'phone_number' => $request->phone_number ?? $member->phone_number,
+                'phone_number' => $request->has('phone_number')
+                    ? app(PhoneIdentityService::class)->requireAvailable($request->phone_number, (int) $member->id)
+                    : $member->phone_number,
             ]);
 
             if ($member->traineeDetails) {
@@ -458,7 +459,7 @@ class PanelMemberController extends BaseController
             if ($name === '') $errors[] = 'Name required';
             if (!$phone) $errors[] = 'Phone invalid. Use 10 digit Indian mobile starting 6-9';
             if ($phone && in_array($phone, $seenPhones)) $errors[] = 'Duplicate phone inside CSV';
-            if ($phone && User::where('type', 'trainee')->where('parent_id', $pid)->where('phone_number', $phone)->exists()) $errors[] = 'Duplicate phone in this gym';
+            if ($phone && !app(PhoneIdentityService::class)->isAvailable($phone)) $errors[] = PhoneIdentityService::DUPLICATE_MESSAGE;
             if (!in_array($gender, $allowedGender)) $errors[] = 'Gender must be male, female or other';
             if (!$plan) $errors[] = 'Membership plan not found. Use exact plan title or plan ID';
             if (!$startDate) $errors[] = 'Start date invalid. Use YYYY-MM-DD';

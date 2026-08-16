@@ -233,6 +233,12 @@ class PanelStaffRoleController extends BaseController
                 'permission_key' => $permission,
             ]);
         }
+
+        // Existing app tokens contain old permission payloads. Revoke them so
+        // staff must authenticate again and cannot keep stale access.
+        $role->users()->each(function ($staff) {
+            $staff->tokens()->delete();
+        });
     }
 
     private function rolePayload(StaffRole $role): array

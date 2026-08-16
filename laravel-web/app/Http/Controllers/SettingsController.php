@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Setting;
 use App\Models\User;
 use App\Support\PlatformMaintenance;
+use App\Services\AcquisitionSourceService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 
@@ -29,6 +30,11 @@ class SettingsController extends BaseController
         ]);
     }
 
+    public function acquisitionSources(Request $request): JsonResponse
+    {
+        return $this->success(['sources' => AcquisitionSourceService::enabled()]);
+    }
+
     public function systemStatus(Request $request): JsonResponse
     {
         return $this->success([
@@ -46,6 +52,12 @@ class SettingsController extends BaseController
 
     public function index(Request $request): JsonResponse
     {
+        // This response includes gym-wide settings and attendance QR secret.
+        // Staff personal Settings use profile/password endpoints, not this API.
+        if (!$this->isGymOwner()) {
+            return $this->error('Only gym owner can view gym settings', 403);
+        }
+
         $parentIds = $this->getGymParentIds();
         $currentUser = $this->currentUser();
         $pid = $this->getParentId();
@@ -89,6 +101,10 @@ class SettingsController extends BaseController
 
     public function update(Request $request): JsonResponse
     {
+        if (!$this->isGymOwner()) {
+            return $this->error('Only gym owner can update gym settings', 403);
+        }
+
         $pid = $this->getParentId();
 
         $input = $request->all();

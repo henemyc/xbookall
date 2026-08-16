@@ -1,0 +1,11 @@
+# Firebase Android configuration is environment-specific.
+flutter_app/android/app/google-services.json
+flutter_app/android/app/src/staging/google-services.json
+
+# Firebase server credential. Never keep this in public web folders or Git.
+laravel-web/storage/app/private/firebase/*.json
+laravel-web/firebase-service-account*.json
+
+# Local environment files
+laravel-web/.env
+flutter_app/.dart_tool/

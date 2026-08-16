@@ -84,6 +84,20 @@ class _AddMemberScreenState extends ConsumerState<AddMemberScreen> {
     return true;
   }
 
+  bool get _classesAllowed {
+    final user = ref.read(authProvider).user;
+    final tier = user?['current_tier'];
+    final tierCode = tier is Map ? (tier['code'] ?? '').toString().toLowerCase() : '';
+    final features = user?['plan_features'];
+    if (features is Map && features.containsKey('classes_enabled')) {
+      final value = features['classes_enabled'];
+      if (value is bool) return value;
+      return !['0', 'false', 'no', 'disabled', 'coming_soon'].contains(value.toString().toLowerCase());
+    }
+    if (tierCode == 'bronze') return false;
+    return false;
+  }
+
   List<DropdownMenuItem<String>> _planItems() {
     return plans.whereType<Map>().map((p) {
       return DropdownMenuItem<String>(
@@ -143,12 +157,14 @@ class _AddMemberScreenState extends ConsumerState<AddMemberScreen> {
       print('AddMember categories error: $e');
     }
 
-    try {
-      final res = await api.getClasses();
-      loadedClasses = _extractList(res, 'classes');
-    } catch (e) {
-      // ignore: avoid_print
-      print('AddMember classes error: $e');
+    if (_classesAllowed) {
+      try {
+        final res = await api.getClasses();
+        loadedClasses = _extractList(res, 'classes');
+      } catch (e) {
+        // ignore: avoid_print
+        print('AddMember classes skipped/error: $e');
+      }
     }
 
     if (!mounted) return;
@@ -158,6 +174,7 @@ class _AddMemberScreenState extends ConsumerState<AddMemberScreen> {
       categories = loadedCategories;
       classes = loadedClasses;
       if (!_trainersAllowed) selectedTrainer = null;
+      if (!_classesAllowed) selectedClass = null;
       loadingMeta = false;
     });
   }
@@ -286,7 +303,7 @@ class _AddMemberScreenState extends ConsumerState<AddMemberScreen> {
         'gender': gender,
         'membership_plan': int.tryParse(selectedPlan ?? '0') ?? 0,
         'trainer_assign': _trainersAllowed ? (int.tryParse(selectedTrainer ?? '0') ?? 0) : 0,
-        'class_id': int.tryParse(selectedClass ?? '0') ?? 0,
+        'class_id': _classesAllowed ? (int.tryParse(selectedClass ?? '0') ?? 0) : 0,
         'category': int.tryParse(selectedCategory ?? '0') ?? 0,
         'membership_start_date': startDate != null ? _dateYmd(startDate!) : null,
         'membership_expiry_date': expiryDate != null ? _dateYmd(expiryDate!) : null,
@@ -364,8 +381,10 @@ class _AddMemberScreenState extends ConsumerState<AddMemberScreen> {
                       DropdownButtonFormField<String>(value: selectedTrainer, decoration: const InputDecoration(labelText: 'Assign Trainer', prefixIcon: Icon(Icons.sports_martial_arts_rounded)), hint: const Text('Select Trainer'), items: trainers.whereType<Map>().map((t) => DropdownMenuItem<String>(value: t['id'].toString(), child: Text(t['name']?.toString() ?? 'Trainer'))).toList(), onChanged: (v) => setState(() => selectedTrainer = v)),
                       const SizedBox(height: 12),
                     ],
-                    DropdownButtonFormField<String>(value: selectedClass, decoration: const InputDecoration(labelText: 'Choose Class', prefixIcon: Icon(Icons.self_improvement_rounded)), hint: const Text('Select Class'), items: classes.whereType<Map>().map((c) => DropdownMenuItem<String>(value: c['id'].toString(), child: Text('${c['title']} - ₹${c['fees'] ?? 0}'))).toList(), onChanged: (v) => setState(() => selectedClass = v)),
-                    const SizedBox(height: 12),
+                    if (_classesAllowed) ...[
+                      DropdownButtonFormField<String>(value: selectedClass, decoration: const InputDecoration(labelText: 'Choose Class', prefixIcon: Icon(Icons.self_improvement_rounded)), hint: const Text('Select Class'), items: classes.whereType<Map>().map((c) => DropdownMenuItem<String>(value: c['id'].toString(), child: Text('${c['title']} - ₹${c['fees'] ?? 0}'))).toList(), onChanged: (v) => setState(() => selectedClass = v)),
+                      const SizedBox(height: 12),
+                    ],
                     Row(children: [
                       Expanded(child: InkWell(onTap: () async { final d = await showDatePicker(context: context, initialDate: startDate ?? DateTime.now(), firstDate: DateTime(2020), lastDate: DateTime(2030)); if (d != null) setState(() { startDate = d; _recalcExpiry(); }); }, child: InputDecorator(decoration: const InputDecoration(labelText: 'Start Date'), child: Text(startDate != null ? '${startDate!.day}-${startDate!.month}-${startDate!.year}' : '-', style: context.typo.bodyLarge)))),
                       const SizedBox(width: 12),
@@ -422,7 +441,7 @@ class _AddMemberScreenState extends ConsumerState<AddMemberScreen> {
       decoration: BoxDecoration(gradient: AppTheme.darkHeroGradient, borderRadius: BorderRadius.circular(22)),
       child: Column(children: [
         _sumRow('Plan Amount', _planAmount),
-        _sumRow('Class Fee', _classFee),
+        if (_classesAllowed) _sumRow('Class Fee', _classFee),
         _sumRow('Registration Fee', _regFee),
         _sumRow('Subtotal', _subtotal),
         if (_discount > 0) _sumRow('Discount', -_discount, color: AppTheme.warning),

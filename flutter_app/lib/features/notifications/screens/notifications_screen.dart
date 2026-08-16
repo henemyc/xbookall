@@ -50,9 +50,13 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
             child: state.isLoading && !state.hasLoaded
                 ? const SkeletonList()
                 : state.error != null && state.notifications.isEmpty
-                    ? ErrorRetry(message: 'Failed to load notifications.', onRetry: () => ref.read(notificationsProvider.notifier).load())
+                    ? ErrorRetry(
+                        message: _notificationErrorMessage(state.error),
+                        network: _isNetworkError(state.error),
+                        onRetry: () => ref.read(notificationsProvider.notifier).load(force: true),
+                      )
                     : state.notifications.isEmpty
-                        ? const EmptyState(icon: Icons.notifications_none_rounded, title: 'No new notifications', subtitle: "You're all caught up!")
+                        ? _notificationsEmptyState()
                         : RefreshIndicator(
                             color: AppTheme.brand,
                             onRefresh: () => ref.read(notificationsProvider.notifier).load(force: true),
@@ -91,6 +95,35 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
                           ),
           ),
         ],
+      ),
+    );
+  }
+
+  String _notificationErrorMessage(String? error) {
+    final text = (error ?? '').toLowerCase();
+    if (text.contains('401') || text.contains('unauthorized')) return 'Your session has expired. Please login again.';
+    if (text.contains('404')) return 'Notification service is not available on the server.';
+    if (text.contains('500') || text.contains('sql') || text.contains('database')) return 'Notification service has a server database issue.';
+    if (_isNetworkError(error)) return 'No internet connection. Please check your network.';
+    return 'Could not load notifications. Please try again.';
+  }
+
+  bool _isNetworkError(String? error) {
+    final text = (error ?? '').toLowerCase();
+    return text.contains('internet') || text.contains('connection') || text.contains('socket') || text.contains('timeout');
+  }
+
+  Widget _notificationsEmptyState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(32, 20, 32, 32),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Image.asset('assets/images/push_notifications_pana.png', height: 205, fit: BoxFit.contain),
+          const SizedBox(height: 12),
+          Text('No new notifications', style: context.typo.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+          const SizedBox(height: 6),
+          Text("You're all caught up!", textAlign: TextAlign.center, style: context.typo.bodySmall?.copyWith(color: context.tokens.textTertiary)),
+        ]),
       ),
     );
   }

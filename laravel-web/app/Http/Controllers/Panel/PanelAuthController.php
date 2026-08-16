@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Panel;
 use App\Http\Controllers\BaseController;
 use App\Models\User;
 use App\Models\Attendance;
+use App\Services\PhoneIdentityService;
 use App\Models\TraineeDetail;
 use App\Models\Setting;
 use Illuminate\Http\Request;
@@ -36,12 +37,13 @@ class PanelAuthController extends BaseController
             return back()->withErrors(['email' => 'Enter a valid 10-digit phone number.'])->withInput();
         }
 
-        $user = User::where(function ($q) use ($loginDigits) {
-                $q->where('phone_number', $loginDigits)
-                  ->orWhere('phone_number', 'like', '%' . $loginDigits)
-                  ->orWhere('phone_number', 'like', '%91' . $loginDigits);
-            })
-            ->first();
+        $matches = app(PhoneIdentityService::class)
+            ->matchingUsers($loginDigits)
+            ->where('is_active', true)
+            ->get();
+        // Never select the first migrated duplicate. A panel login is valid
+        // only when one exact global phone identity exists.
+        $user = $matches->count() === 1 ? $matches->first() : null;
 
         // IMPORTANT: Always return generic error.
         // Even if credentials are correct but user is super_admin (or any other type),

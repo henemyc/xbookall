@@ -1,4 +1,6 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:shimmer/shimmer.dart';
 import 'package:gymxbook/core/theme/app_theme.dart';
@@ -185,23 +187,41 @@ class GxAvatar extends StatelessWidget {
   final String name;
   final double size;
   final int? seed;
-  const GxAvatar({super.key, required this.name, this.size = 46, this.seed});
+  /// API value `profile_photo_url`. When absent, use the shipped default
+  /// avatar—not initials—so every member has a consistent profile placeholder.
+  final String? imageUrl;
+  /// Use a true circular photo where a people/profile list needs that shape.
+  final bool circular;
+
+  const GxAvatar({super.key, required this.name, this.size = 46, this.seed, this.imageUrl, this.circular = false});
+
   @override
   Widget build(BuildContext context) {
-    final letter = name.trim().isNotEmpty ? name.trim()[0].toUpperCase() : '?';
-    final colorSeed = seed ?? name.hashCode;
-    final c1 = AppTheme.categoryColors[colorSeed.abs() % AppTheme.categoryColors.length];
+    final radius = BorderRadius.circular(circular ? size / 2 : size * 0.34);
+    final validRemoteImage = imageUrl != null && imageUrl!.trim().isNotEmpty;
     return Container(
-      width: size, height: size,
+      width: size,
+      height: size,
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        gradient: LinearGradient(colors: [c1.withOpacity(0.9), c1], begin: Alignment.topLeft, end: Alignment.bottomRight),
-        borderRadius: BorderRadius.circular(size * 0.34),
-        boxShadow: [BoxShadow(color: c1.withOpacity(0.3), blurRadius: 10, offset: const Offset(0, 4))],
+        color: AppTheme.brand.withOpacity(0.10),
+        borderRadius: radius,
+        border: Border.all(color: AppTheme.brand.withOpacity(0.10)),
       ),
-      alignment: Alignment.center,
-      child: Text(letter, style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.w700, fontSize: size * 0.42)),
+      child: validRemoteImage
+          ? CachedNetworkImage(
+              imageUrl: imageUrl!,
+              fit: BoxFit.cover,
+              // Never leave a blank/spinning avatar on slow networks. The
+              // bundled fallback stays visible until the real image is ready.
+              placeholder: (_, __) => _defaultAvatar(),
+              errorWidget: (_, __, ___) => _defaultAvatar(),
+            )
+          : _defaultAvatar(),
     );
   }
+
+  Widget _defaultAvatar() => Image.asset('assets/images/default-avatar.png', fit: BoxFit.cover);
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -266,18 +286,22 @@ class EmptyState extends StatelessWidget {
 class ErrorRetry extends StatelessWidget {
   final String message;
   final VoidCallback onRetry;
-  const ErrorRetry({super.key, required this.message, required this.onRetry});
+  final bool network;
+  const ErrorRetry({super.key, required this.message, required this.onRetry, this.network = false});
   @override
   Widget build(BuildContext context) {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
         child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Container(width: 84, height: 84, decoration: BoxDecoration(color: AppTheme.danger.withOpacity(0.12), borderRadius: BorderRadius.circular(28)), child: const Icon(Icons.cloud_off_rounded, size: 38, color: AppTheme.danger)),
+          if (network)
+            Image.asset('assets/images/no_connection_pana.png', height: 180, fit: BoxFit.contain)
+          else
+            Container(width: 84, height: 84, decoration: BoxDecoration(color: AppTheme.danger.withOpacity(0.12), borderRadius: BorderRadius.circular(28)), child: const Icon(Icons.cloud_off_rounded, size: 38, color: AppTheme.danger)),
           const SizedBox(height: 18),
-          Text('Something went wrong', style: context.typo.titleMedium),
+          Text(network ? 'No internet connection' : 'Something went wrong', style: context.typo.titleMedium),
           const SizedBox(height: 6),
-          Text(message, textAlign: TextAlign.center, style: context.typo.bodySmall?.copyWith(color: context.tokens.textTertiary)),
+          Text(network ? 'Check your connection and try again.' : message, textAlign: TextAlign.center, style: context.typo.bodySmall?.copyWith(color: context.tokens.textTertiary)),
           const SizedBox(height: 18),
           FireButton(label: 'Try Again', icon: Icons.refresh_rounded, expand: false, onPressed: onRetry),
         ]),
@@ -395,4 +419,30 @@ class CountUp extends StatelessWidget {
       builder: (context, v, _) => Text('$prefix${v.round()}$suffix', style: style),
     );
   }
+}
+
+
+/// WhatsApp-style full-screen profile image preview. Safe to call only when a
+/// real uploaded image exists (not the default avatar fallback).
+void showProfilePhotoViewer(BuildContext context, String imageUrl, {String? heroTag}) {
+  if (imageUrl.trim().isEmpty) return;
+  showGeneralDialog(
+    context: context,
+    barrierDismissible: true,
+    barrierLabel: 'Close profile photo',
+    barrierColor: Colors.black.withOpacity(.34),
+    pageBuilder: (_, __, ___) => BackdropFilter(
+      filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+      child: GestureDetector(
+        onTap: () => Navigator.of(context).pop(),
+        child: SafeArea(
+          child: Stack(children: [
+            Positioned(top: 12, right: 14, child: IconButton(onPressed: () => Navigator.of(context).pop(), icon: const Icon(Icons.close_rounded, color: Colors.white), style: IconButton.styleFrom(backgroundColor: Colors.black.withOpacity(.24)))),
+            Center(child: InteractiveViewer(child: ClipRRect(borderRadius: BorderRadius.circular(22), child: heroTag == null ? Image.network(imageUrl, fit: BoxFit.contain) : Hero(tag: heroTag, child: Image.network(imageUrl, fit: BoxFit.contain))))),
+          ]),
+        ),
+      ),
+    ),
+    transitionBuilder: (_, animation, __, child) => FadeTransition(opacity: animation, child: ScaleTransition(scale: CurvedAnimation(parent: animation, curve: Curves.easeOutCubic), child: child)),
+  );
 }

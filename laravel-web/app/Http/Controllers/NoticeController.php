@@ -3,13 +3,19 @@
 namespace App\Http\Controllers;
 
 use App\Models\NoticeBoard;
+use App\Services\FcmPushService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 
 class NoticeController extends BaseController
 {
+    // Phase 3: staff actions below require their exact notices permission.
     public function index(Request $request): JsonResponse
     {
+        if (!$this->canPerformGymAction('notices.view')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $parentIds = $this->getGymParentIds();
 
         $notices = NoticeBoard::whereIn('parent_id', $parentIds)
@@ -21,6 +27,10 @@ class NoticeController extends BaseController
 
     public function store(Request $request): JsonResponse
     {
+        if (!$this->canPerformGymAction('notices.create')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $pid = $this->getParentId();
 
         $request->validate([
@@ -34,6 +44,21 @@ class NoticeController extends BaseController
             'parent_id' => $pid,
         ]);
 
+        // FCM is best-effort only. A provider/config/database failure must
+        // never prevent the notice itself from being created and visible.
+        try {
+            // Notice push is for gym members only. The owner created the
+            // notice and staff/trainers manage it, so they do not receive it.
+            app(FcmPushService::class)->sendToGymMembers($pid, 'New notice', $notice->title, [
+                'type' => 'notice',
+                'category' => 'notices',
+                'notice_id' => $notice->id,
+                'route' => 'notices',
+            ]);
+        } catch (\Throwable $e) {
+            \Log::warning('Notice FCM delivery skipped', ['notice_id' => $notice->id, 'error' => $e->getMessage()]);
+        }
+
         return $this->success([
             'id' => $notice->id,
             'notice' => $notice,
@@ -42,6 +67,10 @@ class NoticeController extends BaseController
 
     public function update(Request $request, int $id): JsonResponse
     {
+        if (!$this->canPerformGymAction('notices.edit')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $parentIds = $this->getGymParentIds();
 
         $notice = NoticeBoard::where('id', $id)->whereIn('parent_id', $parentIds)->first();
@@ -60,6 +89,10 @@ class NoticeController extends BaseController
 
     public function destroy(int $id): JsonResponse
     {
+        if (!$this->canPerformGymAction('notices.delete')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $parentIds = $this->getGymParentIds();
 
         $notice = NoticeBoard::where('id', $id)->whereIn('parent_id', $parentIds)->first();

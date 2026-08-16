@@ -8,11 +8,16 @@ use Illuminate\Http\JsonResponse;
 
 class HealthRecordController extends BaseController
 {
+    // Phase 3: staff health-record access follows members view/edit permissions.
     /**
      * List health records
      */
     public function index(Request $request): JsonResponse
     {
+        if ($this->isStaff() && !$this->hasStaffPermission('members.view')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $parentIds = $this->getGymParentIds();
         $user = $this->currentUser();
         $userId = $request->get('user_id', $user->id);
@@ -35,7 +40,12 @@ class HealthRecordController extends BaseController
      */
     public function store(Request $request): JsonResponse
     {
+        if ($this->isStaff() && !$this->hasStaffPermission('members.edit')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $parentIds = $this->getGymParentIds();
+        $pid = $this->getParentId();
 
         $request->validate([
             'user_id' => 'required|integer|exists:users,id',
@@ -62,6 +72,10 @@ class HealthRecordController extends BaseController
      */
     public function update(Request $request, int $id): JsonResponse
     {
+        if ($this->isStaff() && !$this->hasStaffPermission('members.edit')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $parentIds = $this->getGymParentIds();
 
         $record = Health::where('id', $id)->whereIn('parent_id', $parentIds)->first();
@@ -83,6 +97,10 @@ class HealthRecordController extends BaseController
      */
     public function destroy(int $id): JsonResponse
     {
+        if ($this->isStaff() && !$this->hasStaffPermission('members.edit')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $parentIds = $this->getGymParentIds();
         $user = $this->currentUser();
 

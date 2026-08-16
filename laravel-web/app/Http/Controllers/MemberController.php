@@ -12,6 +12,7 @@ use App\Models\InvoiceItem;
 use App\Models\InvoicePayment;
 use App\Models\AppNotification;
 use App\Services\WhatsAppService;
+use App\Services\PhoneIdentityService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
@@ -21,6 +22,10 @@ class MemberController extends BaseController
 {
     public function index(Request $request): JsonResponse
     {
+        if (!$this->canPerformGymAction('members.view')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $parentIds = $this->getGymParentIds();
         $search = $request->get('search', '');
         $status = $request->get('status', '');
@@ -75,6 +80,9 @@ class MemberController extends BaseController
                 $member->trainee_status = $member->traineeDetails->status;
                 $member->membership_expiry_date = $member->traineeDetails->membership_expiry_date;
                 $member->plan_name = $member->traineeDetails->membership ? $member->traineeDetails->membership->title : null;
+                // Flatten member location for the Flutter members list.
+                $member->address = $member->traineeDetails->address;
+                $member->city = $member->traineeDetails->city;
             }
         });
 
@@ -91,6 +99,10 @@ class MemberController extends BaseController
      */
     public function store(Request $request): JsonResponse
     {
+        if (!$this->canPerformGymAction('members.create')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $pid = $this->getParentId(); // STRICT write scoping (current gym owner id)
 
         $memberLimit = $this->planLimit('members_limit', 0);
@@ -139,16 +151,12 @@ class MemberController extends BaseController
             }
         }
 
-        // Phone uniqueness check (optional but recommended)
-        if (!empty($validated['phone_number'])) {
-            $phoneDigits = preg_replace('/\D/', '', $validated['phone_number']);
-            $phoneExists = User::where('phone_number', $phoneDigits)
-                ->where('parent_id', $pid)
-                ->exists();
-
-            if ($phoneExists) {
-                return $this->error('A member with this phone number already exists', 400);
-            }
+        // Option 1 policy: global unique login phone across all gyms/types.
+        $phoneIdentity = app(PhoneIdentityService::class);
+        try {
+            $phoneDigits = $phoneIdentity->requireAvailable($validated['phone_number']);
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 400);
         }
 
         DB::beginTransaction();
@@ -158,7 +166,7 @@ class MemberController extends BaseController
             $user = User::create([
                 'name' => $validated['name'],
                 'email' => $email,
-                'phone_number' => preg_replace('/\D/', '', $validated['phone_number'] ?? ''),
+                'phone_number' => $phoneDigits,
                 'password' => Hash::make('member123'), // Default; can be updated later
                 'type' => 'trainee',
                 'parent_id' => $pid,           // STRICT: belongs to this gym
@@ -393,6 +401,10 @@ class MemberController extends BaseController
         $parentIds = $this->getGymParentIds();
         $currentUser = $this->currentUser();
 
+        if ($currentUser->type === 'staff' && !$this->hasStaffPermission('members.view')) {
+            return $this->error('Permission denied', 403);
+        }
+
         if ($currentUser->type === 'trainee' && $currentUser->id != $id) {
             return $this->error('Forbidden', 403);
         }
@@ -410,6 +422,10 @@ class MemberController extends BaseController
             $user->trainee_status = $user->traineeDetails->status;
             $user->membership_expiry_date = $user->traineeDetails->membership_expiry_date;
             $user->plan_name = $user->traineeDetails->membership ? $user->traineeDetails->membership->title : null;
+            // Edit Member reads root keys from this response.
+            $user->address = $user->traineeDetails->address;
+            $user->city = $user->traineeDetails->city;
+            $user->gender = $user->traineeDetails->gender;
         }
 
         // === RICH DATA for Member Details screen (invoices, transactions, health, attendance) ===
@@ -460,6 +476,10 @@ class MemberController extends BaseController
      */
     public function update(Request $request, int $id): JsonResponse
     {
+        if (!$this->canPerformGymAction('members.edit')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $parentIds = $this->getGymParentIds();
         $pid = $this->getParentId();
 
@@ -474,6 +494,15 @@ class MemberController extends BaseController
         DB::beginTransaction();
         try {
             $userUpdates = $request->only(['name', 'email', 'phone_number', 'is_active']);
+            if (array_key_exists('phone_number', $userUpdates)) {
+                $phoneIdentity = app(PhoneIdentityService::class);
+                try {
+                    $userUpdates['phone_number'] = $phoneIdentity->requireAvailable($userUpdates['phone_number'], (int) $user->id);
+                } catch (\InvalidArgumentException $e) {
+                    DB::rollBack();
+                    return $this->error($e->getMessage(), 400);
+                }
+            }
             if (!empty($userUpdates)) {
                 $user->update($userUpdates);
             }
@@ -511,6 +540,10 @@ class MemberController extends BaseController
 
     public function destroy(int $id): JsonResponse
     {
+        if (!$this->canPerformGymAction('members.delete')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $parentIds = $this->getGymParentIds();
         $user = User::where('id', $id)->whereIn('parent_id', $parentIds)->first();
         if (!$user) return $this->error('Member not found', 404);
@@ -521,18 +554,65 @@ class MemberController extends BaseController
 
     public function hardDelete(int $id): JsonResponse
     {
+        if (!$this->canPerformGymAction('members.delete')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $parentIds = $this->getGymParentIds();
-        $user = User::where('id', $id)->whereIn('parent_id', $parentIds)->first();
+        $user = User::where('id', $id)
+            ->where('type', 'trainee')
+            ->whereIn('parent_id', $parentIds)
+            ->first();
         if (!$user) return $this->error('Member not found', 404);
 
-        $user->traineeDetails?->delete();
-        $user->delete();
+        try {
+            DB::transaction(function () use ($user, $parentIds) {
+                $userId = (int) $user->id;
 
-        return $this->success([], 'Member permanently deleted');
+                // Finance: payments/items must be deleted before their invoices.
+                $invoiceIds = Invoice::where('user_id', $userId)->whereIn('parent_id', $parentIds)->pluck('id');
+                if ($invoiceIds->isNotEmpty()) {
+                    DB::table('invoice_payments')->whereIn('invoice_id', $invoiceIds)->delete();
+                    DB::table('invoice_items')->whereIn('invoice_id', $invoiceIds)->delete();
+                    Invoice::whereIn('id', $invoiceIds)->delete();
+                }
+
+                // Unlock assigned lockers before deleting assignment history.
+                $lockerIds = DB::table('assign_lockers')->where('user_id', $userId)->pluck('locker_id');
+                if ($lockerIds->isNotEmpty()) {
+                    DB::table('lockers')->whereIn('id', $lockerIds)->update(['available' => true]);
+                    DB::table('assign_lockers')->where('user_id', $userId)->delete();
+                }
+
+                // Workouts are assigned directly to the member. workout_activities
+                // is a global exercise catalog, not member-owned data.
+                DB::table('workouts')->where('assign_id', $userId)->whereIn('parent_id', $parentIds)->delete();
+
+                DB::table('attendances')->where('user_id', $userId)->whereIn('parent_id', $parentIds)->delete();
+                DB::table('healths')->where('user_id', $userId)->whereIn('parent_id', $parentIds)->delete();
+                DB::table('class_assigns')->where('assign_id', $userId)->delete();
+                DB::table('freeze_membership_logs')->where('trainee_id', $userId)->delete();
+                DB::table('app_notifications')->where('user_id', $userId)->delete();
+                DB::table('trainee_details')->where('user_id', $userId)->delete();
+
+                // Remove every active app token before permanently removing user.
+                $user->tokens()->delete();
+                $user->delete();
+            });
+
+            return $this->success([], 'Member and all related records deleted permanently');
+        } catch (\Throwable $e) {
+            \Log::error('Hard member delete failed', ['user_id' => $id, 'error' => $e->getMessage()]);
+            return $this->error('Could not delete member records safely. Nothing was deleted.', 500);
+        }
     }
 
     public function renew(Request $request, int $id): JsonResponse
     {
+        if (!$this->canPerformGymAction('members.renew')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $parentIds = $this->getGymParentIds();
         $pid = $this->getParentId();
 
@@ -558,7 +638,15 @@ class MemberController extends BaseController
             return $this->error('Plan not found', 404);
         }
 
-        $start = $validated['membership_start_date'] ?? now()->toDateString();
+        $previousExpiry = \Carbon\Carbon::parse($user->traineeDetails->membership_expiry_date)->startOfDay();
+        $minimumStart = $previousExpiry->copy()->addDay();
+        $requestedStart = !empty($validated['membership_start_date'])
+            ? \Carbon\Carbon::parse($validated['membership_start_date'])->startOfDay()
+            : $minimumStart;
+        if ($requestedStart->lt($minimumStart)) {
+            return $this->error('Renewal start date cannot be before the day after the current membership expiry.', 422);
+        }
+        $start = $requestedStart->toDateString();
         $expiry = $validated['membership_expiry_date'] ?? $this->calculateExpiry($start, $membership->package ?? 'monthly');
 
         $user->traineeDetails->update([
@@ -650,6 +738,10 @@ class MemberController extends BaseController
 
     public function freeze(Request $request, int $id): JsonResponse
     {
+        if (!$this->canPerformGymAction('members.freeze')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $parentIds = $this->getGymParentIds();
         $user = User::where('id', $id)->whereIn('parent_id', $parentIds)->first();
         if (!$user || !$user->traineeDetails) return $this->error('Member not found', 404);
@@ -660,6 +752,10 @@ class MemberController extends BaseController
 
     public function unfreeze(int $id): JsonResponse
     {
+        if (!$this->canPerformGymAction('members.freeze')) {
+            return $this->error('Permission denied', 403);
+        }
+
         $parentIds = $this->getGymParentIds();
         $user = User::where('id', $id)->whereIn('parent_id', $parentIds)->first();
         if (!$user || !$user->traineeDetails) return $this->error('Member not found', 404);

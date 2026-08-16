@@ -18,6 +18,7 @@ use App\Models\InvoicePayment;
 use App\Models\Expense;
 use App\Models\Product;
 use App\Models\NoticeBoard;
+use App\Services\PhoneIdentityService;
 use App\Models\AppNotification;
 use App\Models\Locker;
 use App\Models\AssignLocker;
@@ -31,6 +32,8 @@ use App\Models\WorkoutActivity;
 use App\Models\Health;
 use App\Models\FreezeMembershipLog;
 use App\Models\WhatsAppLog;
+use App\Services\WhatsAppService;
+use App\Support\PlatformOperationMode;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -116,6 +119,94 @@ class GymController extends BaseController
     }
 
     /**
+     * Super Admin creates a Gym Owner account directly. This intentionally
+     * bypasses WhatsApp OTP because it is a trusted back-office action.
+     */
+    public function store(Request $request)
+    {
+        $data = $request->validate([
+            'business_name' => 'required|string|max:255',
+            'owner_name' => 'required|string|max:255',
+            'phone_number' => 'required|string|max:20',
+            'email' => 'nullable|email|max:255',
+            'password' => 'required|string|min:6',
+            'address' => 'nullable|string|max:1000',
+            'acquisition_source' => 'nullable|in:google_search,play_store,social_media,youtube,chatgpt_ai,referral,sales_team,other,super_admin',
+            'acquisition_detail' => 'nullable|string|max:255',
+        ]);
+
+        try {
+            $phone = app(PhoneIdentityService::class)->requireAvailable($data['phone_number']);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['success' => false, 'error' => $e->getMessage()], 422);
+        }
+        $email = trim((string) ($data['email'] ?? ''));
+        if ($email !== '' && User::where('email', $email)->exists()) {
+            return response()->json(['success' => false, 'error' => 'Email already exists'], 422);
+        }
+        if ($email === '') $email = 'gym_' . $phone . '@gymxbook.temp';
+
+        try {
+            $gym = DB::transaction(function () use ($data, $phone, $email) {
+                $gym = User::create([
+                    'name' => $data['owner_name'],
+                    'email' => $email,
+                    'phone_number' => $phone,
+                    'type' => 'admin',
+                    'password' => \Illuminate\Support\Facades\Hash::make($data['password']),
+                    'parent_id' => 1,
+                    'is_active' => true,
+                    'acquisition_source' => $data['acquisition_source'] ?? 'super_admin',
+                    'acquisition_detail' => $data['acquisition_detail'] ?? null,
+                ]);
+
+                Setting::setValue('company_name', $data['business_name'], $gym->id);
+                Setting::setValue('company_phone', $phone, $gym->id);
+                if (!str_ends_with($email, '@gymxbook.temp')) Setting::setValue('company_email', $email, $gym->id);
+                if (!empty($data['address'])) Setting::setValue('company_address', $data['address'], $gym->id);
+
+                // Deliberately no membership plan seed. New gym Plans starts empty.
+                $bronze = Schema::hasTable('subscription_tiers')
+                    ? SubscriptionTier::where('code', 'bronze')->first()
+                    : null;
+                $trialEnd = now('Asia/Kolkata')->addDays(7)->endOfDay();
+                $updates = [
+                    'subscription_status' => 'trial',
+                    'subscription_started_at' => now('Asia/Kolkata'),
+                    'subscription_ends_at' => $trialEnd,
+                    'subscription_expire_date' => $trialEnd->toDateString(),
+                ];
+                if ($bronze) $updates['subscription_tier_id'] = $bronze->id;
+                $gym->update($updates);
+                return $gym;
+            });
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Gym account created successfully',
+                'redirect' => route('admin.gyms.show', $gym->id),
+            ]);
+        } catch (\Throwable $e) {
+            \Log::error('Super Admin create gym failed', ['error' => $e->getMessage()]);
+            return response()->json(['success' => false, 'error' => 'Could not create gym account'], 500);
+        }
+    }
+
+    public function updateAcquisition(Request $request, int $id)
+    {
+        $gym = User::where('id', $id)->where('type', 'admin')->firstOrFail();
+        $data = $request->validate([
+            'acquisition_source' => 'required|in:google_search,play_store,social_media,youtube,chatgpt_ai,referral,sales_team,other,super_admin',
+            'acquisition_detail' => 'nullable|string|max:255',
+        ]);
+        $gym->update([
+            'acquisition_source' => $data['acquisition_source'],
+            'acquisition_detail' => trim((string) ($data['acquisition_detail'] ?? '')) ?: null,
+        ]);
+        return redirect()->route('admin.gyms.show', $id)->with('success', 'Gym acquisition information updated');
+    }
+
+    /**
      * Update gym
      */
     public function update(Request $request, int $id)
@@ -127,10 +218,18 @@ class GymController extends BaseController
             'email' => 'required|email',
         ]);
 
+        try {
+            $phone = $request->has('phone_number')
+                ? app(PhoneIdentityService::class)->requireAvailable($request->phone_number, (int) $gym->id)
+                : $gym->phone_number;
+        } catch (\InvalidArgumentException $e) {
+            return back()->withInput()->with('error', $e->getMessage());
+        }
+
         $gym->update([
             'name' => $request->name,
             'email' => $request->email,
-            'phone_number' => $request->phone_number ?? $gym->phone_number,
+            'phone_number' => $phone,
         ]);
 
         if ($request->company_name) Setting::setValue('company_name', $request->company_name, $id);
@@ -311,11 +410,50 @@ class GymController extends BaseController
         return redirect()->route('admin.login');
     }
 
+    /** Send WhatsApp confirmation OTP before destructive gym deletion. */
+    public function sendDeleteOtp(int $id)
+    {
+        if (!PlatformOperationMode::isDebug()) {
+            return response()->json(['success' => false, 'error' => 'Gym deletion is disabled in Production Mode.'], 403);
+        }
+        $gym = User::where('id', $id)->where('type', 'admin')->firstOrFail();
+        $admin = auth()->user();
+        if (!$admin || empty($admin->phone_number)) {
+            return response()->json(['success' => false, 'error' => 'Super Admin WhatsApp phone is missing.'], 422);
+        }
+        $otp = (string) random_int(100000, 999999);
+        $whatsapp = new WhatsAppService();
+        $result = $whatsapp->sendOtp($admin->phone_number, $otp, 1);
+        if (empty($result['success'])) {
+            return response()->json(['success' => false, 'error' => 'Could not send WhatsApp deletion confirmation code.'], 500);
+        }
+        session([
+            'admin_gym_delete_id' => $gym->id,
+            'admin_gym_delete_hash' => \Illuminate\Support\Facades\Hash::make($otp),
+            'admin_gym_delete_expires_at' => now()->addMinutes(5)->toDateTimeString(),
+            'admin_gym_delete_attempts' => 0,
+        ]);
+        return response()->json(['success' => true, 'message' => 'WhatsApp confirmation code sent.']);
+    }
+
     /**
      * Delete gym with cascading delete
      */
-    public function destroy(int $id)
+    public function destroy(Request $request, int $id)
     {
+        if (!PlatformOperationMode::isDebug()) {
+            return response()->json(['success' => false, 'error' => 'Gym deletion is disabled in Production Mode.'], 403);
+        }
+        $hash = session('admin_gym_delete_hash');
+        $expires = session('admin_gym_delete_expires_at');
+        $sessionGymId = (int) session('admin_gym_delete_id', 0);
+        $attempts = (int) session('admin_gym_delete_attempts', 0);
+        $otp = trim((string) $request->input('delete_otp', ''));
+        if ($sessionGymId !== $id || !$hash || !$expires || now()->greaterThan(Carbon::parse($expires)) || $attempts >= 5 || !\Illuminate\Support\Facades\Hash::check($otp, $hash)) {
+            session()->forget(['admin_gym_delete_id', 'admin_gym_delete_hash', 'admin_gym_delete_expires_at', 'admin_gym_delete_attempts']);
+            return response()->json(['success' => false, 'error' => 'Invalid or expired deletion confirmation code.'], 422);
+        }
+        session()->forget(['admin_gym_delete_id', 'admin_gym_delete_hash', 'admin_gym_delete_expires_at', 'admin_gym_delete_attempts']);
         $gym = User::where('id', $id)->where('type', 'admin')->firstOrFail();
         $gymName = $gym->name;
 
@@ -376,10 +514,16 @@ class GymController extends BaseController
             $gym->delete();
 
             DB::commit();
+            if ($request->expectsJson() || $request->wantsJson()) {
+                return response()->json(['success' => true, 'message' => "Gym '{$gymName}' and all related data deleted permanently"]);
+            }
             return redirect()->route('admin.gyms.index')->with('success', "Gym '{$gymName}' and all related data deleted permanently");
 
         } catch (\Exception $e) {
             DB::rollBack();
+            if ($request->expectsJson() || $request->wantsJson()) {
+                return response()->json(['success' => false, 'error' => 'Failed to delete gym safely'], 500);
+            }
             return redirect()->route('admin.gyms.show', $id)->with('error', 'Failed to delete gym: ' . $e->getMessage());
         }
     }

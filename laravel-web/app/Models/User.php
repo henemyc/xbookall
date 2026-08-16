@@ -18,6 +18,8 @@ class User extends Authenticatable
         'type',
         'password',
         'profile',
+        'acquisition_source',
+        'acquisition_detail',
         'lang',
         'subscription',
         'subscription_tier_id',
@@ -41,6 +43,10 @@ class User extends Authenticatable
         'last_app_version',
         'last_app_ip',
     ];
+
+    // Always expose a display-ready URL in API user payloads. The path remains
+    // storage-provider agnostic so the same records work on public storage or S3.
+    protected $appends = ['profile_photo_url'];
 
     protected $hidden = [
         'password',
@@ -153,6 +159,25 @@ class User extends Authenticatable
     }
 
     // ── Accessors ─────────────────────────────────────────────────
+
+    /**
+     * A display-ready profile photo URL for every user.
+     *
+     * The existing `profile` column stores a disk-relative path (for example,
+     * profile-photos/42/profile.jpg). Changing FILESYSTEM_DISK from public to
+     * S3 later changes this generated URL without a Flutter update or migration.
+     */
+    public function getProfilePhotoUrlAttribute(): string
+    {
+        if (!empty($this->profile)) {
+            // FTP-compatible public directory. The profile column contains a
+            // relative path such as profile-photos/42/uuid.jpg.
+            $version = optional($this->updated_at)->timestamp ?? time();
+            return url('/uploads/' . ltrim($this->profile, '/')) . '?v=' . $version;
+        }
+
+        return url('/images/default-avatar.png');
+    }
 
     public function getIsAdminAttribute(): bool
     {
