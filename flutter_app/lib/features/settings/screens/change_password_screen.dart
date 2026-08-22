@@ -40,7 +40,7 @@ class _ChangePasswordScreenState extends ConsumerState<ChangePasswordScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('Change Password')),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
+        padding: EdgeInsets.fromLTRB(20, 20, 20, 20 + MediaQuery.of(context).padding.bottom),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Center(child: IconBadge(Icons.lock_reset_rounded, color: AppTheme.brand, size: 68, iconSize: 34)),
           const SizedBox(height: 20),

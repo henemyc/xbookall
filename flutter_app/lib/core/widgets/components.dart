@@ -29,7 +29,7 @@ class SectionHeader extends StatelessWidget {
               onTap: onAction,
               child: Row(children: [
                 Text(action!, style: context.typo.labelMedium?.copyWith(color: AppTheme.brand, fontWeight: FontWeight.w700)),
-                const Icon(Icons.chevron_right_rounded, size: 16, color: AppTheme.brand),
+                Icon(Icons.chevron_right_rounded, size: 16, color: AppTheme.brand),
               ]),
             ),
         ],
@@ -104,8 +104,8 @@ class FireButton extends StatefulWidget {
   final VoidCallback? onPressed;
   final bool loading;
   final bool expand;
-  final Gradient gradient;
-  const FireButton({super.key, required this.label, this.icon, this.onPressed, this.loading = false, this.expand = true, this.gradient = AppTheme.fireGradient});
+  final Gradient? gradient;
+  const FireButton({super.key, required this.label, this.icon, this.onPressed, this.loading = false, this.expand = true, this.gradient});
   @override
   State<FireButton> createState() => _FireButtonState();
 }
@@ -139,7 +139,7 @@ class _FireButtonState extends State<FireButton> {
       padding: widget.expand ? null : const EdgeInsets.symmetric(horizontal: 26),
       alignment: Alignment.center,
       decoration: BoxDecoration(
-        gradient: disabled ? null : widget.gradient,
+        gradient: disabled ? null : (widget.gradient ?? AppTheme.fireGradient),
         color: disabled ? context.tokens.surfaceAlt : null,
         borderRadius: BorderRadius.circular(16),
         boxShadow: disabled ? null : [BoxShadow(color: AppTheme.brand.withOpacity(0.35), blurRadius: 20, offset: const Offset(0, 8), spreadRadius: -4)],

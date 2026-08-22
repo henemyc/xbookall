@@ -8,6 +8,7 @@ use App\Models\MemberDiet;
 use App\Models\MemberDietMeal;
 use App\Models\TraineeDetail;
 use App\Models\User;
+use App\Services\NotificationDeliveryService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -290,5 +291,28 @@ class DietController extends BaseController
             'calories' => $meal['calories'] ?? null, 'protein' => $meal['protein'] ?? null,
             'carbs' => $meal['carbs'] ?? null, 'fats' => $meal['fats'] ?? null, 'notes' => $meal['notes'] ?? null,
         ];
+    }
+
+    /**
+     * Best-effort member notification for diet assignment / update.
+     * Never throws — a notification failure must not break the assignment.
+     */
+    private function notifyMemberDiet(int $memberId, $diet, bool $isUpdate = false): void
+    {
+        try {
+            $title = $isUpdate ? 'Diet Plan Updated' : 'Diet Plan Assigned';
+            $message = ($isUpdate ? 'Your diet plan has been updated: ' : 'A new diet plan has been assigned to you: ')
+                . ($diet->title ?? 'Diet Plan');
+
+            app(NotificationDeliveryService::class)->notifyUser(
+                $memberId,
+                $title,
+                $message,
+                'success',
+                ['member_diet_id' => $diet->id ?? null, 'route' => 'my_diet']
+            );
+        } catch (\Throwable $e) {
+            \Log::warning('Diet notification skipped (safe): ' . $e->getMessage());
+        }
     }
 }

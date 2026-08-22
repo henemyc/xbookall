@@ -136,7 +136,7 @@ class _TrainerMembersScreenState extends ConsumerState<TrainerMembersScreen> {
             StatusBadge(expired ? 'Expired' : (expiring ? 'Expiring' : 'Active'), color: color),
           ]),
         ])),
-        const Icon(Icons.chevron_right_rounded, color: AppTheme.brand),
+        Icon(Icons.chevron_right_rounded, color: AppTheme.brand),
       ]),
     );
   }
@@ -146,7 +146,7 @@ class _TrainerMembersScreenState extends ConsumerState<TrainerMembersScreen> {
       future: ref.read(apiClientProvider).getTrainerAssignedMember(int.parse(m['id'].toString())),
       builder: (context, snap) {
         if (!snap.hasData) {
-          return const Padding(
+          return Padding(
             padding: EdgeInsets.all(32),
             child: Center(child: CircularProgressIndicator(color: AppTheme.brand)),
           );

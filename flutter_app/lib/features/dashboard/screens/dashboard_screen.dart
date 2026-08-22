@@ -57,6 +57,65 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     return 'Good evening';
   }
 
+  int _asInt(dynamic v) {
+    if (v == null) return 0;
+    if (v is num) return v.toInt();
+    return int.tryParse(v.toString()) ?? 0;
+  }
+
+  /// Bottom CTA for brand-new gyms: no plan yet → create plan; else zero
+  /// members → add first member. Returns null when no CTA is needed.
+  Widget? _setupCta(Map stats) {
+    final planCountRaw = stats['plans'];
+    final hasPlanCount = planCountRaw != null;
+    final planCount = _asInt(planCountRaw);
+    final memberCount = _asInt(stats['members']);
+
+    if (hasPlanCount && planCount <= 0) {
+      return _ctaBanner(
+        icon: Icons.card_membership_rounded,
+        message: 'No membership plan created yet. Create a plan to set pricing and start adding members.',
+        buttonLabel: 'Add Plan',
+        onPressed: () => ref.read(navIndexProvider.notifier).state = 6, // Memberships tab
+      );
+    }
+    if (memberCount <= 0) {
+      return _ctaBanner(
+        icon: Icons.person_add_rounded,
+        message: 'No members added yet. Add your first member to start managing your gym.',
+        buttonLabel: 'Add Member',
+        onPressed: () async {
+          final created = await Navigator.push(context, MaterialPageRoute(builder: (_) => const AddMemberScreen()));
+          if (created == true) _load();
+        },
+      );
+    }
+    return null;
+  }
+
+  Widget _ctaBanner({required IconData icon, required String message, required String buttonLabel, required VoidCallback onPressed}) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 4, 16, 10),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        gradient: AppTheme.fireGradient,
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: [BoxShadow(color: AppTheme.brand.withOpacity(.28), blurRadius: 16, offset: const Offset(0, 8))],
+      ),
+      child: Row(children: [
+        Container(width: 40, height: 40, decoration: BoxDecoration(color: Colors.white.withOpacity(.2), borderRadius: BorderRadius.circular(12)), child: Icon(icon, color: Colors.white, size: 20)),
+        const SizedBox(width: 12),
+        Expanded(child: Text(message, style: context.typo.bodySmall?.copyWith(color: Colors.white, height: 1.4))),
+        const SizedBox(width: 10),
+        Pressable(radius: 12, onTap: onPressed, child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
+          child: Text(buttonLabel, style: context.typo.labelLarge?.copyWith(color: AppTheme.brandDeep, fontWeight: FontWeight.w800)),
+        )),
+      ]),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (loading) return const _DashboardSkeleton();
@@ -71,10 +130,16 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
 
     final name = (auth.user?['name'] ?? 'there').toString().split(' ').first;
 
+    // Brand-new gym onboarding CTAs: create a plan first, then add members.
+    final setupCta = _setupCta(stats);
+
     // CupertinoSliverRefreshControl expands above the list while dragging.
     // Unlike the Material overlay indicator, it physically moves the complete
     // dashboard down for the fluid, modern pull-to-refresh interaction.
-    return CustomScrollView(
+    return Column(
+      children: [
+        Expanded(
+          child: CustomScrollView(
       physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
       slivers: [
         CupertinoSliverRefreshControl(
@@ -83,7 +148,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             return Center(
               child: Opacity(
                 opacity: (pulledExtent / refreshTriggerPullDistance).clamp(0.0, 1.0),
-                child: const CupertinoActivityIndicator(color: AppTheme.brand),
+                child: CupertinoActivityIndicator(color: AppTheme.brand),
               ),
             );
           },
@@ -246,6 +311,10 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
           ),
         ),
       ],
+          ),
+        ),
+        if (setupCta != null) setupCta,
+      ],
     );
   }
 
@@ -266,7 +335,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
           const SizedBox(height: 14),
           Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), decoration: BoxDecoration(color: Colors.white.withOpacity(0.10), borderRadius: BorderRadius.circular(14), border: Border.all(color: Colors.white.withOpacity(0.12))),
             child: Row(mainAxisSize: MainAxisSize.min, children: [
-              const Icon(Icons.bolt_rounded, color: AppTheme.brandAmber, size: 16),
+              Icon(Icons.bolt_rounded, color: AppTheme.brandAmber, size: 16),
               const SizedBox(width: 6),
               Text('Your gym is running smoothly', style: GoogleFonts.poppins(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.w600)),
             ]),
@@ -339,9 +408,11 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     final memberId = int.tryParse((m['id'] ?? m['user_id'] ?? 0).toString()) ?? 0;
     return SurfaceCard(
       padding: const EdgeInsets.all(12),
-      onTap: () {
+      onTap: () async {
         if (memberId > 0) {
-          Navigator.push(context, MaterialPageRoute(builder: (_) => MemberDetailScreen(memberId: memberId, memberName: m['name'] ?? '')));
+          final changed = await Navigator.push<bool>(context, MaterialPageRoute(builder: (_) => MemberDetailScreen(memberId: memberId, memberName: m['name'] ?? '')));
+          // Refresh immediately when a member was deleted/edited.
+          if (changed == true && mounted) _load();
         }
       },
       child: Row(children: [

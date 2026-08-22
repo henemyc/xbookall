@@ -236,7 +236,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                       Icon(item.$3, color: _source == item.$1 ? AppTheme.brand : context.tokens.textSecondary),
                       const SizedBox(width: 12),
                       Expanded(child: Text(item.$2, style: context.typo.titleSmall)),
-                      if (_source == item.$1) const Icon(Icons.check_circle_rounded, color: AppTheme.brand),
+                      if (_source == item.$1) Icon(Icons.check_circle_rounded, color: AppTheme.brand),
                     ],
                   ),
                 ),

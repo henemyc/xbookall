@@ -166,6 +166,7 @@ class _MemberDashboardScreenState extends ConsumerState<MemberDashboardScreen> {
             _quickAction(Icons.qr_code_scanner_rounded, 'Scan QR', AppTheme.brand, () => ref.read(navIndexProvider.notifier).state = 2),
             _quickAction(Icons.fact_check_rounded, 'Visits', AppTheme.info, () => ref.read(navIndexProvider.notifier).state = 1),
             _quickAction(Icons.fitness_center_rounded, 'Workout', AppTheme.success, () => ref.read(navIndexProvider.notifier).state = 3),
+            _quickAction(Icons.restaurant_menu_rounded, 'Diet', AppTheme.brandAmber, () => ref.read(navIndexProvider.notifier).state = 8),
             _quickAction(Icons.campaign_rounded, 'Notices', AppTheme.warning, () => ref.read(navIndexProvider.notifier).state = 5),
           ])),
           const SizedBox(height: 22),

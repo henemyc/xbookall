@@ -35,13 +35,31 @@ class SubscriptionController extends BaseController
         // New SaaS tier system: Bronze / Silver / Gold with duration pricing.
         $tiers = [];
         if (\Illuminate\Support\Facades\Schema::hasTable('subscription_tiers')) {
+            // Load card features with raw queries so the app keeps working even
+            // when the Eloquent model file / relation is missing on a server.
+            $cardFeaturesByTier = [];
+            if (\Illuminate\Support\Facades\Schema::hasTable('subscription_tier_card_features')) {
+                foreach (DB::table('subscription_tier_card_features')
+                    ->where('is_visible', true)
+                    ->orderBy('sort_order')
+                    ->get() as $cf) {
+                    $cardFeaturesByTier[(int) $cf->subscription_tier_id][] = [
+                        'id' => $cf->id,
+                        'label' => $cf->feature_label,
+                        'is_included' => (bool) $cf->is_included,
+                        'tooltip' => $cf->tooltip_text,
+                        'sort_order' => $cf->sort_order,
+                    ];
+                }
+            }
+
             $tiers = SubscriptionTier::with(['features', 'prices' => function ($q) {
                     $q->orderBy('sort_order')->orderBy('duration_months');
                 }])
                 ->where('is_active', true)
                 ->orderBy('sort_order')
                 ->get()
-                ->map(function ($tier) {
+                ->map(function ($tier) use ($cardFeaturesByTier) {
                     return [
                         'id' => $tier->id,
                         'code' => $tier->code,
@@ -62,6 +80,7 @@ class SubscriptionController extends BaseController
                                 'sort_order' => $feature->sort_order,
                             ];
                         })->values(),
+                        'card_features' => $cardFeaturesByTier[$tier->id] ?? [],
                         'prices' => $tier->prices->map(function ($price) {
                             return [
                                 'id' => $price->id,

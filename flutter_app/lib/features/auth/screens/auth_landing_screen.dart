@@ -93,8 +93,10 @@ class _AuthLandingScreenState extends ConsumerState<AuthLandingScreen> {
     bool otpMode = false;
     bool otpSent = false;
     bool otpBusy = false;
+    bool checking = false;
     int step = 0;
     final otpCtrl = TextEditingController();
+    final passFocus = FocusNode();
 
     showAppSheet(
       context,
@@ -139,13 +141,40 @@ class _AuthLandingScreenState extends ConsumerState<AuthLandingScreen> {
                   const SizedBox(height: 7),
                   TextField(controller: _phoneCtrl, keyboardType: TextInputType.phone, inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(10)], decoration: const InputDecoration(prefixIcon: Icon(Icons.phone_rounded), hintText: '10-digit mobile number')),
                   const SizedBox(height: 24),
-                  FireButton(label: 'Continue', icon: Icons.arrow_forward_rounded, onPressed: () { final enteredPhone = _digitsOnly(_phoneCtrl.text); if (!RegExp(r'^[6-9]\d{9}$').hasMatch(enteredPhone)) { _nativeToast('Enter a valid 10-digit phone number', error: true); return; } setSheetState(() => step = 1); }),
+                  FireButton(
+                    label: 'Continue',
+                    icon: Icons.arrow_forward_rounded,
+                    loading: checking,
+                    onPressed: checking ? null : () async {
+                      final enteredPhone = _digitsOnly(_phoneCtrl.text);
+                      if (!RegExp(r'^[6-9]\d{9}$').hasMatch(enteredPhone)) { _nativeToast('Enter a valid 10-digit phone number', error: true); return; }
+                      // Check the account exists BEFORE asking for a password.
+                      setSheetState(() => checking = true);
+                      try {
+                        final exists = await sheetRef.read(apiClientProvider).checkAccountExists(phone: enteredPhone);
+                        if (!mounted) return;
+                        if (exists) {
+                          setSheetState(() { checking = false; step = 1; });
+                          // Auto-open the keyboard for the password field.
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            if (mounted) passFocus.requestFocus();
+                          });
+                        } else {
+                          setSheetState(() => checking = false);
+                          _nativeToast('No account found with this phone number. Please register first.', error: true);
+                        }
+                      } catch (_) {
+                        setSheetState(() => checking = false);
+                        _nativeToast('Could not verify this number. Please check your connection.', error: true);
+                      }
+                    },
+                  ),
                 ] else if (!otpMode) ...[
                   Text('Phone: $phone', style: context.typo.bodySmall?.copyWith(color: context.tokens.textTertiary)),
                   const SizedBox(height: 16),
                   Text('Password', style: context.typo.labelMedium?.copyWith(fontWeight: FontWeight.w700)),
                   const SizedBox(height: 7),
-                  TextField(controller: _passwordCtrl, obscureText: obscure, onSubmitted: (_) => auth.isLoading ? null : _login(), decoration: InputDecoration(prefixIcon: const Icon(Icons.lock_outline_rounded), hintText: 'Enter your password', suffixIcon: IconButton(icon: Icon(obscure ? Icons.visibility_off_rounded : Icons.visibility_rounded, size: 20), onPressed: () => setSheetState(() => obscure = !obscure)))),
+                  TextField(controller: _passwordCtrl, focusNode: passFocus, obscureText: obscure, onSubmitted: (_) => auth.isLoading ? null : _login(), decoration: InputDecoration(prefixIcon: const Icon(Icons.lock_outline_rounded), hintText: 'Enter your password', suffixIcon: IconButton(icon: Icon(obscure ? Icons.visibility_off_rounded : Icons.visibility_rounded, size: 20), onPressed: () => setSheetState(() => obscure = !obscure)))),
                   const SizedBox(height: 10),
                   Align(alignment: Alignment.centerRight, child: TextButton(onPressed: () => setSheetState(() { otpMode = true; otpSent = false; }), child: const Text('Login with WhatsApp OTP'))),
                   const SizedBox(height: 12),
@@ -169,7 +198,10 @@ class _AuthLandingScreenState extends ConsumerState<AuthLandingScreen> {
           },
         ),
       ),
-    ).whenComplete(otpCtrl.dispose);
+    ).whenComplete(() {
+      otpCtrl.dispose();
+      passFocus.dispose();
+    });
   }
 
   String _apiError(Object error) {
@@ -186,8 +218,12 @@ class _AuthLandingScreenState extends ConsumerState<AuthLandingScreen> {
       isScrollControlled: true,
       useSafeArea: true,
       backgroundColor: Colors.transparent,
+      // Lock the registration sheet: no swipe-down or outside-tap dismiss, so
+      // users can't accidentally lose their half-filled registration.
+      isDismissible: false,
+      enableDrag: false,
       builder: (_) => FractionallySizedBox(
-        heightFactor: .94,
+        heightFactor: .82,
         child: ClipRRect(
           borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
           child: const RegisterScreen(),

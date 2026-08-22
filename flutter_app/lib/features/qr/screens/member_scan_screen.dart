@@ -410,7 +410,7 @@ class _MemberScanScreenState extends ConsumerState<MemberScanScreen>
                 width: 238,
                 height: 3,
                 decoration: BoxDecoration(
-                  gradient: const LinearGradient(colors: [Colors.transparent, Color(0xFFFF6B2C), Colors.transparent]),
+                  gradient: LinearGradient(colors: [Colors.transparent, AppTheme.brand, Colors.transparent]),
                   boxShadow: [BoxShadow(color: AppTheme.brand.withOpacity(0.9), blurRadius: 12)],
                 ),
               ),
@@ -421,7 +421,7 @@ class _MemberScanScreenState extends ConsumerState<MemberScanScreen>
             child: Container(
               padding: const EdgeInsets.all(18),
               decoration: BoxDecoration(color: Colors.black.withOpacity(0.58), borderRadius: BorderRadius.circular(18)),
-              child: const SizedBox(width: 34, height: 34, child: CircularProgressIndicator(color: AppTheme.brand, strokeWidth: 3)),
+              child: SizedBox(width: 34, height: 34, child: CircularProgressIndicator(color: AppTheme.brand, strokeWidth: 3)),
             ),
           ),
       ]),
@@ -436,10 +436,10 @@ class _MemberScanScreenState extends ConsumerState<MemberScanScreen>
       height: 38,
       decoration: BoxDecoration(
         border: Border(
-          top: top ? const BorderSide(color: AppTheme.brand, width: 4) : BorderSide.none,
-          bottom: !top ? const BorderSide(color: AppTheme.brand, width: 4) : BorderSide.none,
-          left: left ? const BorderSide(color: AppTheme.brand, width: 4) : BorderSide.none,
-          right: !left ? const BorderSide(color: AppTheme.brand, width: 4) : BorderSide.none,
+          top: top ? BorderSide(color: AppTheme.brand, width: 4) : BorderSide.none,
+          bottom: !top ? BorderSide(color: AppTheme.brand, width: 4) : BorderSide.none,
+          left: left ? BorderSide(color: AppTheme.brand, width: 4) : BorderSide.none,
+          right: !left ? BorderSide(color: AppTheme.brand, width: 4) : BorderSide.none,
         ),
       ),
     );

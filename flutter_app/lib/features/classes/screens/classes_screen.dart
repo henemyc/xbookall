@@ -292,9 +292,9 @@ class _ClassesScreenState extends ConsumerState<ClassesScreen> {
           TextField(controller: daysCtrl, decoration: const InputDecoration(labelText: 'Days', hintText: 'Mon,Wed,Fri', prefixIcon: Icon(Icons.calendar_month_rounded))),
           const SizedBox(height: 12),
           Row(children: [
-            Expanded(child: TextField(controller: startCtrl, decoration: const InputDecoration(labelText: 'Start Time', hintText: '06:00'), keyboardType: TextInputType.datetime)),
+            Expanded(child: _classTimeField(ctx, setSheet, 'Start Time', startCtrl)),
             const SizedBox(width: 12),
-            Expanded(child: TextField(controller: endCtrl, decoration: const InputDecoration(labelText: 'End Time', hintText: '07:00'), keyboardType: TextInputType.datetime)),
+            Expanded(child: _classTimeField(ctx, setSheet, 'End Time', endCtrl)),
           ]),
           const SizedBox(height: 16),
           _sheetLabel('Assign Trainers'),
@@ -370,6 +370,54 @@ class _ClassesScreenState extends ConsumerState<ClassesScreen> {
         padding: const EdgeInsets.only(bottom: 8),
         child: Text(text, style: context.typo.labelMedium?.copyWith(color: context.tokens.textSecondary, fontWeight: FontWeight.w800)),
       );
+
+  // ── Tap-to-select time field (replaces typed start/end times) ─────
+  Widget _classTimeField(BuildContext ctx, StateSetter setSheet, String label, TextEditingController ctrl) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(16),
+      onTap: () async {
+        final picked = await showTimePicker(
+          context: ctx,
+          initialTime: _parseClassTime(ctrl.text) ?? const TimeOfDay(hour: 6, minute: 0),
+          helpText: 'Select $label',
+        );
+        if (picked != null) {
+          setSheet(() => ctrl.text = _formatClassTime(picked));
+        }
+      },
+      child: InputDecorator(
+        decoration: InputDecoration(
+          labelText: label,
+          prefixIcon: const Icon(Icons.schedule_rounded),
+          suffixIcon: const Icon(Icons.access_time_rounded, size: 20),
+        ),
+        child: Text(
+          ctrl.text.isEmpty ? 'Tap to select' : ctrl.text,
+          style: ctrl.text.isEmpty
+              ? context.typo.bodyLarge?.copyWith(color: context.tokens.textTertiary)
+              : context.typo.bodyLarge,
+        ),
+      ),
+    );
+  }
+
+  TimeOfDay? _parseClassTime(String s) {
+    final m = RegExp(r'(\d{1,2})\s*[:.]\s*(\d{2})').firstMatch(s.trim());
+    if (m == null) return null;
+    var hour = int.tryParse(m.group(1)!) ?? 0;
+    final minute = int.tryParse(m.group(2)!) ?? 0;
+    final upper = s.toUpperCase();
+    if (upper.contains('PM') && hour < 12) hour += 12;
+    if (upper.contains('AM') && hour == 12) hour = 0;
+    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+    return TimeOfDay(hour: hour, minute: minute);
+  }
+
+  String _formatClassTime(TimeOfDay t) {
+    final h = t.hour.toString().padLeft(2, '0');
+    final m = t.minute.toString().padLeft(2, '0');
+    return '$h:$m';
+  }
 
   List<Map<String, dynamic>> _mapList(dynamic raw) {
     if (raw is! List) return [];

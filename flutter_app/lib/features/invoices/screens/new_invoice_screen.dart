@@ -74,7 +74,7 @@ class _NewInvoiceScreenState extends ConsumerState<NewInvoiceScreen> {
       appBar: AppBar(title: const Text('New Invoice')),
       bottomNavigationBar: const AppBottomNav(),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 40),
+        padding: EdgeInsets.fromLTRB(16, 8, 16, 40 + MediaQuery.of(context).padding.bottom),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           _card('Select Member', Icons.person_rounded, AppTheme.brand, [
             TextField(controller: memberSearchCtrl, decoration: const InputDecoration(hintText: 'Search by name, phone…', prefixIcon: Icon(Icons.search_rounded)), onChanged: _searchMembers),

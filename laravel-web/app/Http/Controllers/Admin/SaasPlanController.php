@@ -4,9 +4,9 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\BaseController;
 use App\Models\SubscriptionTier;
-use App\Models\SubscriptionTierCardFeature;
 use App\Models\SubscriptionTierFeature;
 use App\Models\SubscriptionTierPrice;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -15,30 +15,101 @@ class SaasPlanController extends BaseController
 {
     public function index()
     {
-        if (!Schema::hasTable('subscription_tiers') || !Schema::hasTable('subscription_tier_features') || !Schema::hasTable('subscription_tier_prices') || !Schema::hasTable('subscription_tier_card_features')) {
+        $baseMissing = !Schema::hasTable('subscription_tiers')
+            || !Schema::hasTable('subscription_tier_features')
+            || !Schema::hasTable('subscription_tier_prices');
+
+        if ($baseMissing) {
             return view('admin.saas-plans.index', [
                 'tiers' => collect(),
                 'missingSchema' => true,
+                'cardFeaturesAvailable' => false,
+                'cardFeaturesByTier' => [],
                 'featureTypes' => $this->featureTypes(),
                 'billingCycles' => $this->billingCycles(),
+                'cardFeatureCount' => 0,
+                'limitCount' => 0,
             ]);
         }
 
         if (SubscriptionTier::count() === 0) {
             $this->seedDefaults();
         }
-        if (SubscriptionTierCardFeature::count() === 0) {
+
+        // Self-heal: create the card-features table on the fly when it is
+        // missing (no separate model file or migration required on the server).
+        $this->ensureCardFeaturesTable();
+        if ($this->cardFeaturesCount() === 0) {
             $this->seedDefaultCardFeatures();
         }
 
-        $tiers = SubscriptionTier::with(['features', 'prices', 'cardFeatures'])->orderBy('sort_order')->get();
+        $tiers = SubscriptionTier::with(['features', 'prices'])->orderBy('sort_order')->get();
+
+        $cardFeaturesByTier = $this->cardFeaturesByTier();
+
+        $cardFeatureCount = 0;
+        foreach ($cardFeaturesByTier as $rows) {
+            $cardFeatureCount += count($rows);
+        }
+        $limitCount = 0;
+        foreach ($tiers as $tier) {
+            $limitCount += collect($tier->features ?? [])->count();
+        }
 
         return view('admin.saas-plans.index', [
             'tiers' => $tiers,
             'missingSchema' => false,
+            'cardFeaturesAvailable' => true,
+            'cardFeaturesByTier' => $cardFeaturesByTier,
             'featureTypes' => $this->featureTypes(),
             'billingCycles' => $this->billingCycles(),
+            'cardFeatureCount' => $cardFeatureCount,
+            'limitCount' => $limitCount,
         ]);
+    }
+
+    /**
+     * Create the card-features table if it does not exist yet. Uses the same
+     * schema as the migration so old deployments self-repair without needing
+     * the migration file or the Eloquent model.
+     */
+    private function ensureCardFeaturesTable(): void
+    {
+        if (Schema::hasTable('subscription_tier_card_features')) {
+            return;
+        }
+        Schema::create('subscription_tier_card_features', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('subscription_tier_id');
+            $table->string('feature_label', 180);
+            $table->boolean('is_included')->default(true);
+            $table->string('tooltip_text', 255)->nullable();
+            $table->boolean('is_visible')->default(true);
+            $table->integer('sort_order')->default(0);
+            $table->timestamps();
+            $table->index('subscription_tier_id');
+            $table->index(['is_visible', 'sort_order']);
+        });
+    }
+
+    private function cardFeaturesByTier(): array
+    {
+        $map = [];
+        if (!Schema::hasTable('subscription_tier_card_features')) {
+            return $map;
+        }
+        foreach (DB::table('subscription_tier_card_features')->orderBy('sort_order')->get() as $row) {
+            $map[(int) $row->subscription_tier_id][] = $row;
+        }
+        return $map;
+    }
+
+    private function cardFeaturesCount(): int
+    {
+        if (!Schema::hasTable('subscription_tier_card_features')) {
+            return 0;
+        }
+        return DB::table('subscription_tier_card_features')->count();
     }
 
     public function updateTier(Request $request, int $id)
@@ -107,35 +178,104 @@ class SaasPlanController extends BaseController
     {
         $tier = SubscriptionTier::findOrFail($tierId);
         $data = $this->validateCardFeature($request);
+        $this->ensureCardFeaturesTable();
 
-        $feature = SubscriptionTierCardFeature::create($this->cardFeaturePayload($tier->id, $data));
-        $this->logActivity('saas_plans', 'card_feature_created', 'subscription_tier_card_features', $feature->id, 'Created card feature for ' . $tier->name, null, $feature);
+        $payload = $this->cardFeaturePayload($tier->id, $data);
+        $payload['created_at'] = now();
+        $id = DB::table('subscription_tier_card_features')->insertGetId($payload);
 
+        $this->logActivity('saas_plans', 'card_feature_created', 'subscription_tier_card_features', $id, 'Created card feature for ' . $tier->name);
+
+        if ($request->ajax() || $request->wantsJson()) {
+            $row = DB::table('subscription_tier_card_features')->where('id', $id)->first();
+            return response()->json(['success' => true, 'feature' => $row]);
+        }
         return redirect()->route('admin.saas-plans.index')->with('success', 'Card feature added successfully');
     }
 
     public function updateCardFeature(Request $request, int $id)
     {
-        $feature = SubscriptionTierCardFeature::with('tier')->findOrFail($id);
+        $this->ensureCardFeaturesTable();
+        $feature = DB::table('subscription_tier_card_features')->where('id', $id)->first();
+        if (!$feature) abort(404);
         $data = $this->validateCardFeature($request);
 
-        $before = $feature->toArray();
-        $feature->update($this->cardFeaturePayload((int) $feature->subscription_tier_id, $data));
-        $this->logActivity('saas_plans', 'card_feature_updated', 'subscription_tier_card_features', $feature->id, 'Updated card feature for ' . ($feature->tier->name ?? 'tier'), $before, $feature->fresh());
+        DB::table('subscription_tier_card_features')->where('id', $id)->update($this->cardFeaturePayload((int) $feature->subscription_tier_id, $data));
 
+        $this->logActivity('saas_plans', 'card_feature_updated', 'subscription_tier_card_features', $id, 'Updated card feature ' . $feature->feature_label);
+
+        if ($request->ajax() || $request->wantsJson()) {
+            return response()->json(['success' => true]);
+        }
         return redirect()->route('admin.saas-plans.index')->with('success', 'Card feature updated successfully');
     }
 
-    public function destroyCardFeature(int $id)
+    public function destroyCardFeature(Request $request, int $id)
     {
-        $feature = SubscriptionTierCardFeature::with('tier')->findOrFail($id);
-        $before = $feature->toArray();
-        $tierName = $feature->tier->name ?? 'tier';
-        $feature->delete();
+        $this->ensureCardFeaturesTable();
+        DB::table('subscription_tier_card_features')->where('id', $id)->delete();
 
-        $this->logActivity('saas_plans', 'card_feature_deleted', 'subscription_tier_card_features', $id, 'Deleted card feature for ' . $tierName, $before, null);
+        $this->logActivity('saas_plans', 'card_feature_deleted', 'subscription_tier_card_features', $id, 'Deleted card feature');
 
+        if ($request->ajax() || $request->wantsJson()) {
+            return response()->json(['success' => true]);
+        }
         return redirect()->route('admin.saas-plans.index')->with('success', 'Card feature deleted successfully');
+    }
+
+    /**
+     * Single-save bulk endpoint: create new + update existing card features
+     * for a tier in one request (the editor has ONE "Save changes" button).
+     */
+    public function syncCardFeatures(Request $request, int $tierId)
+    {
+        $tier = SubscriptionTier::findOrFail($tierId);
+        $data = $request->validate([
+            'features' => 'required|array',
+            'features.*.id' => 'nullable|integer',
+            'features.*.feature_label' => 'required|string|max:180',
+            'features.*.is_included' => 'nullable|in:0,1',
+            'features.*.tooltip_text' => 'nullable|string|max:255',
+            'features.*.is_visible' => 'nullable|in:0,1',
+            'features.*.sort_order' => 'nullable|integer|min:0|max:999',
+        ]);
+
+        $this->ensureCardFeaturesTable();
+
+        $existingIds = DB::table('subscription_tier_card_features')
+            ->where('subscription_tier_id', $tier->id)
+            ->pluck('id')->map(fn ($v) => (int) $v)->all();
+
+        $keptIds = [];
+        DB::beginTransaction();
+        try {
+            foreach ($data['features'] as $i => $f) {
+                $payload = [
+                    'feature_label' => trim($f['feature_label']),
+                    'is_included' => (int) ($f['is_included'] ?? 0) === 1,
+                    'tooltip_text' => trim((string) ($f['tooltip_text'] ?? '')) ?: null,
+                    'is_visible' => (int) ($f['is_visible'] ?? 1) === 1,
+                    'sort_order' => (int) ($f['sort_order'] ?? $i),
+                    'updated_at' => now(),
+                ];
+                if (!empty($f['id']) && in_array((int) $f['id'], $existingIds, true)) {
+                    DB::table('subscription_tier_card_features')->where('id', (int) $f['id'])->update($payload);
+                    $keptIds[] = (int) $f['id'];
+                } else {
+                    $payload['subscription_tier_id'] = $tier->id;
+                    $payload['created_at'] = now();
+                    $keptIds[] = DB::table('subscription_tier_card_features')->insertGetId($payload);
+                }
+            }
+            DB::commit();
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            throw $e;
+        }
+
+        $this->logActivity('saas_plans', 'card_features_synced', 'subscription_tier_card_features', $tier->id, 'Synced card features for ' . $tier->name);
+
+        return response()->json(['success' => true, 'count' => count($keptIds)]);
     }
 
     public function storePrice(Request $request, int $tierId)
@@ -245,6 +385,7 @@ class SaasPlanController extends BaseController
             'tooltip_text' => trim((string) ($data['tooltip_text'] ?? '')) ?: null,
             'is_visible' => (int) ($data['is_visible'] ?? 0) === 1,
             'sort_order' => (int) ($data['sort_order'] ?? 0),
+            'updated_at' => now(),
         ];
     }
 
@@ -380,9 +521,7 @@ class SaasPlanController extends BaseController
 
     private function seedDefaultCardFeatures(): void
     {
-        if (!Schema::hasTable('subscription_tier_card_features')) {
-            return;
-        }
+        $this->ensureCardFeaturesTable();
 
         $rows = [
             'bronze' => [
@@ -417,21 +556,23 @@ class SaasPlanController extends BaseController
             ],
         ];
 
+        $now = now();
         foreach ($rows as $tierCode => $features) {
-            $tier = SubscriptionTier::where('code', $tierCode)->first();
-            if (!$tier) continue;
-            if (SubscriptionTierCardFeature::where('subscription_tier_id', $tier->id)->exists()) continue;
+            $tierId = DB::table('subscription_tiers')->where('code', $tierCode)->value('id');
+            if (!$tierId) continue;
+            if (DB::table('subscription_tier_card_features')->where('subscription_tier_id', $tierId)->exists()) continue;
 
             foreach ($features as [$label, $included, $tooltip, $sort]) {
-                SubscriptionTierCardFeature::updateOrCreate(
-                    ['subscription_tier_id' => $tier->id, 'feature_label' => $label],
-                    [
-                        'is_included' => (bool) $included,
-                        'tooltip_text' => $tooltip,
-                        'is_visible' => true,
-                        'sort_order' => $sort,
-                    ]
-                );
+                DB::table('subscription_tier_card_features')->insert([
+                    'subscription_tier_id' => $tierId,
+                    'feature_label' => $label,
+                    'is_included' => $included ? 1 : 0,
+                    'tooltip_text' => $tooltip,
+                    'is_visible' => 1,
+                    'sort_order' => $sort,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ]);
             }
         }
     }

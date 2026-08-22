@@ -11,6 +11,13 @@ class NotificationPreferenceController extends BaseController
     public function show(Request $request): JsonResponse
     {
         $preference = NotificationPreference::firstOrCreate(['user_id' => $request->user()->id]);
+        // Enforce "all ON" defaults for any legacy NULL columns and persist.
+        foreach (['notices_enabled', 'super_admin_enabled', 'payments_enabled', 'membership_enabled', 'workouts_enabled'] as $column) {
+            if ($preference->{$column} === null) {
+                $preference->{$column} = true;
+            }
+        }
+        if ($preference->isDirty()) $preference->save();
         return $this->success(['preferences' => $preference]);
     }
 

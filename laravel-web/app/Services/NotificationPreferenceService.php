@@ -17,6 +17,9 @@ class NotificationPreferenceService
             'workout', 'workouts' => 'workouts_enabled',
             default => null,
         };
-        return $column === null ? true : (bool) $preference->{$column};
+        if ($column === null) return true;
+        $value = $preference->{$column};
+        // Missing/NULL (legacy rows) means "enabled by default".
+        return $value === null ? true : (bool) $value;
     }
 }

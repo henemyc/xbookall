@@ -12,7 +12,9 @@ class NoticeController extends BaseController
     // Phase 3: staff actions below require their exact notices permission.
     public function index(Request $request): JsonResponse
     {
-        if (!$this->canPerformGymAction('notices.view')) {
+        // Members (trainees) can always view notices scoped to their gym —
+        // they are the audience the notices are posted for.
+        if (!$this->canPerformGymAction('notices.view') && !$this->isTrainee()) {
             return $this->error('Permission denied', 403);
         }
 

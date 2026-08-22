@@ -26,6 +26,7 @@ use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\Admin\BugReportController;
 use App\Http\Controllers\WebLoginController;
 use App\Http\Controllers\ProfilePhotoController;
+use App\Http\Controllers\MemberDocumentController;
 use App\Http\Controllers\DeviceTokenController;
 use App\Http\Controllers\NotificationPreferenceController;
 
@@ -46,6 +47,7 @@ Route::get('/v1/health', [HealthController::class, 'check']);
 // Auth routes - no auth required
 Route::prefix('v1')->group(function () {
     Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:5,1');
+    Route::post('/login/check', [AuthController::class, 'checkAccount'])->middleware('throttle:10,1');
     Route::post('/login/send-otp', [AuthController::class, 'sendLoginOtp'])->middleware('throttle:3,15');
     Route::post('/login/verify-otp', [AuthController::class, 'verifyLoginOtp'])->middleware('throttle:5,15');
     Route::post('/register', [AuthController::class, 'register']);
@@ -83,6 +85,9 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
     Route::delete('/profile/photo', [ProfilePhotoController::class, 'removeMine']);
     Route::post('/members/{id}/photo', [ProfilePhotoController::class, 'uploadMember']);
     Route::delete('/members/{id}/photo', [ProfilePhotoController::class, 'removeMember']);
+    Route::get('/members/{id}/documents', [MemberDocumentController::class, 'index']);
+    Route::post('/members/{id}/documents', [MemberDocumentController::class, 'store']);
+    Route::delete('/members/{id}/documents/{docType}', [MemberDocumentController::class, 'destroy']);
     Route::post('/change-password', [AuthController::class, 'changePassword']);
     
     // Dashboard & Reports

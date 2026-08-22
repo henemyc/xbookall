@@ -19,7 +19,7 @@ import 'package:gymxbook/features/notifications/screens/notifications_screen.dar
 import 'package:gymxbook/features/notifications/screens/notification_preferences_screen.dart';
 
 class SettingsScreen extends ConsumerWidget {
-  static const String currentAppVersion = '1.2.0';
+  static const String currentAppVersion = '1.2.2';
 
   const SettingsScreen({super.key});
 
@@ -83,7 +83,7 @@ class SettingsScreen extends ConsumerWidget {
           ],
           const SizedBox(height: 16),
           _group(context, 'App', [
-            _item(context, Icons.info_outline_rounded, context.tokens.textSecondary, 'Version', '1.2.0', null, trailing: Text('v1.2.0', style: context.typo.bodySmall?.copyWith(color: context.tokens.textTertiary))),
+            _item(context, Icons.info_outline_rounded, context.tokens.textSecondary, 'Version', '1.2.2', null, trailing: Text('v1.2.2', style: context.typo.bodySmall?.copyWith(color: context.tokens.textTertiary))),
           ]),
           const SizedBox(height: 24),
           SizedBox(width: double.infinity, child: OutlinedButton.icon(
@@ -620,7 +620,7 @@ class _WebLoginScanScreenState extends ConsumerState<WebLoginScanScreen> with Wi
             ),
             const Spacer(),
             if (loadingSessions)
-              const SizedBox(width: 42, height: 42, child: CircularProgressIndicator(color: AppTheme.brand))
+              SizedBox(width: 42, height: 42, child: CircularProgressIndicator(color: AppTheme.brand))
             else if (activeSessions.isNotEmpty)
               _activeSessionsCard()
             else if (!success)
@@ -639,7 +639,7 @@ class _WebLoginScanScreenState extends ConsumerState<WebLoginScanScreen> with Wi
                   border: Border.all(color: Colors.white.withOpacity(0.16)),
                 ),
                 child: Row(children: [
-                  if (processing) const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.brand))
+                  if (processing) SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.brand))
                   else Icon(success ? Icons.check_circle_rounded : Icons.qr_code_scanner_rounded, color: success ? AppTheme.success : AppTheme.brand, size: 20),
                   const SizedBox(width: 10),
                   Expanded(child: Text(message ?? 'Open web.gymxbook.com → QR Login, then scan the QR.', style: GoogleFonts.poppins(color: Colors.white, fontSize: 12.5, height: 1.35))),
@@ -660,7 +660,7 @@ class _WebLoginScanScreenState extends ConsumerState<WebLoginScanScreen> with Wi
         ...[Alignment.topLeft, Alignment.topRight, Alignment.bottomLeft, Alignment.bottomRight]
             .map((a) => Align(alignment: a, child: _corner(a))),
         if (processing)
-          const Center(child: SizedBox(width: 42, height: 42, child: CircularProgressIndicator(color: AppTheme.brand))),
+          Center(child: SizedBox(width: 42, height: 42, child: CircularProgressIndicator(color: AppTheme.brand))),
       ]),
     );
   }
@@ -672,10 +672,10 @@ class _WebLoginScanScreenState extends ConsumerState<WebLoginScanScreen> with Wi
       width: 38,
       height: 38,
       decoration: BoxDecoration(border: Border(
-        top: top ? const BorderSide(color: AppTheme.brand, width: 4) : BorderSide.none,
-        bottom: !top ? const BorderSide(color: AppTheme.brand, width: 4) : BorderSide.none,
-        left: left ? const BorderSide(color: AppTheme.brand, width: 4) : BorderSide.none,
-        right: !left ? const BorderSide(color: AppTheme.brand, width: 4) : BorderSide.none,
+        top: top ? BorderSide(color: AppTheme.brand, width: 4) : BorderSide.none,
+        bottom: !top ? BorderSide(color: AppTheme.brand, width: 4) : BorderSide.none,
+        left: left ? BorderSide(color: AppTheme.brand, width: 4) : BorderSide.none,
+        right: !left ? BorderSide(color: AppTheme.brand, width: 4) : BorderSide.none,
       )),
     );
   }

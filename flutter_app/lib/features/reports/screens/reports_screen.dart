@@ -71,12 +71,16 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
     ref.read(navIndexProvider.notifier).state = 1; // Members tab
   }
 
-  void _openMemberDetail(dynamic raw) {
+  Future<void> _openMemberDetail(dynamic raw) async {
     if (raw is! Map) return;
     final member = Map<String, dynamic>.from(raw);
     final id = int.tryParse((member['id'] ?? member['user_id'] ?? 0).toString()) ?? 0;
     if (id <= 0) return;
-    Navigator.push(context, MaterialPageRoute(builder: (_) => MemberDetailScreen(memberId: id, memberName: (member['name'] ?? 'Member').toString())));
+    final changed = await Navigator.push<bool>(context, MaterialPageRoute(builder: (_) => MemberDetailScreen(memberId: id, memberName: (member['name'] ?? 'Member').toString())));
+    if (changed == true && mounted) {
+      await _loadReports();
+      await _loadCalendar();
+    }
   }
 
   @override
@@ -356,7 +360,7 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(gradient: AppTheme.darkHeroGradient, borderRadius: BorderRadius.circular(16)),
               child: Row(children: [
-                const Icon(Icons.account_balance_wallet_rounded, color: AppTheme.brandAmber, size: 20),
+                Icon(Icons.account_balance_wallet_rounded, color: AppTheme.brandAmber, size: 20),
                 const SizedBox(width: 10),
                 Text('Total Renewal', style: GoogleFonts.poppins(color: Colors.white.withOpacity(0.7), fontSize: 12)),
                 const Spacer(),

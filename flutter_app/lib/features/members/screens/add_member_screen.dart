@@ -1,7 +1,10 @@
+import 'dart:io';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:image_cropper/image_cropper.dart';
 import 'package:gymxbook/core/widgets/ui.dart';
 import 'package:gymxbook/core/api/api_client.dart';
 import 'package:gymxbook/features/auth/providers/auth_provider.dart';
@@ -48,6 +51,10 @@ class _AddMemberScreenState extends ConsumerState<AddMemberScreen> {
   List classes = [];
   bool loadingMeta = true;
   bool submitting = false;
+
+  // Member documents (Aadhaar front/back) captured before submission.
+  File? _aadhaarFront;
+  File? _aadhaarBack;
 
   @override
   void initState() {
@@ -293,7 +300,7 @@ class _AddMemberScreenState extends ConsumerState<AddMemberScreen> {
     try {
       final api = ref.read(apiClientProvider);
       final payments = _paymentPayload();
-      await api.createMember({
+      final created = await api.createMember({
         'name': nameCtrl.text.trim(),
         'email': emailCtrl.text.trim(),
         'phone_number': phoneCtrl.text.trim(),
@@ -314,6 +321,12 @@ class _AddMemberScreenState extends ConsumerState<AddMemberScreen> {
         'payment_method': payments.isNotEmpty ? payments.first['payment_type'] : 'cash',
         'fitness_goal': '',
       });
+
+      // Upload captured Aadhaar documents (optional) after the member exists.
+      final memberId = int.tryParse(((created['member'] is Map ? created['member']['id'] : null) ?? created['member_id'] ?? created['id'] ?? '').toString());
+      if (memberId != null && (_aadhaarFront != null || _aadhaarBack != null)) {
+        await _uploadDocuments(memberId);
+      }
 
       if (mounted) {
         Toast.success(context, 'Member added successfully');
@@ -346,7 +359,7 @@ class _AddMemberScreenState extends ConsumerState<AddMemberScreen> {
       body: loadingMeta
           ? const Center(child: CircularProgressIndicator())
           : SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 40),
+              padding: EdgeInsets.fromLTRB(16, 8, 16, 40 + MediaQuery.of(context).padding.bottom),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -404,6 +417,16 @@ class _AddMemberScreenState extends ConsumerState<AddMemberScreen> {
                       Padding(padding: const EdgeInsets.only(top: 8), child: Text('Payments exceed total by ₹${(_paid - _total).toStringAsFixed(0)}', style: context.typo.bodySmall?.copyWith(color: AppTheme.danger, fontWeight: FontWeight.w700))),
                   ]),
                   const SizedBox(height: 14),
+                  _card('Documents', Icons.badge_rounded, const Color(0xFF6366F1), [
+                    Text('Aadhaar Card (optional)', style: context.typo.bodySmall?.copyWith(color: context.tokens.textTertiary)),
+                    const SizedBox(height: 12),
+                    Row(children: [
+                      Expanded(child: _aadhaarTile(isFront: true)),
+                      const SizedBox(width: 12),
+                      Expanded(child: _aadhaarTile(isFront: false)),
+                    ]),
+                  ]),
+                  const SizedBox(height: 14),
                   _summaryCard(),
                   const SizedBox(height: 22),
                   FireButton(label: 'Add Member  •  ₹${_total.toStringAsFixed(0)}', icon: Icons.check_rounded, loading: submitting, onPressed: submitting ? null : _submit),
@@ -423,6 +446,171 @@ class _AddMemberScreenState extends ConsumerState<AddMemberScreen> {
         IconButton(onPressed: paymentRows.length <= 1 ? null : () => _removePaymentRow(index), icon: const Icon(Icons.close_rounded), color: AppTheme.danger),
       ]),
     );
+  }
+
+  // ── Aadhaar document capture (camera + auto-crop to card ratio) ──
+  File? _aadhaarFor(bool isFront) => isFront ? _aadhaarFront : _aadhaarBack;
+
+  void _setAadhaar(bool isFront, File? file) {
+    setState(() {
+      if (isFront) {
+        _aadhaarFront = file;
+      } else {
+        _aadhaarBack = file;
+      }
+    });
+  }
+
+  Future<void> _captureAadhaar(bool isFront) async {
+    try {
+      // Capture + downscale/compress the source photo (Aadhaar text only
+      // needs ~1600px) so the upload stays small and fast.
+      final image = await ImagePicker().pickImage(
+        source: ImageSource.camera,
+        imageQuality: 80,
+        maxWidth: 1600,
+        maxHeight: 1000,
+      );
+      if (image == null) return;
+      // Crop to the Aadhaar card aspect ratio (85.6mm × 54mm ≈ 1.59:1).
+      final cropped = await ImageCropper().cropImage(
+        sourcePath: image.path,
+        aspectRatio: const CropAspectRatio(ratioX: 159, ratioY: 100),
+        uiSettings: [
+          AndroidUiSettings(
+            toolbarTitle: isFront ? 'Crop Aadhaar Front' : 'Crop Aadhaar Back',
+            lockAspectRatio: true,
+          ),
+          IOSUiSettings(title: isFront ? 'Crop Aadhaar Front' : 'Crop Aadhaar Back', aspectRatioLockEnabled: true),
+        ],
+      );
+      if (cropped == null) return;
+      if (mounted) _setAadhaar(isFront, File(cropped.path));
+    } catch (e) {
+      if (mounted) Toast.error(context, 'Could not capture document');
+    }
+  }
+
+  Widget _aadhaarTile({required bool isFront}) {
+    final file = _aadhaarFor(isFront);
+    final label = isFront ? 'Aadhaar Front' : 'Aadhaar Back';
+    final icon = isFront ? Icons.badge_outlined : Icons.badge_rounded;
+    return Container(
+      height: 150,
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: context.tokens.surfaceAlt,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: file != null ? AppTheme.success.withOpacity(.5) : context.tokens.border),
+      ),
+      child: file != null
+          ? Stack(fit: StackFit.expand, children: [
+              Image.file(file, fit: BoxFit.cover),
+              Positioned(top: 6, right: 6, child: GestureDetector(
+                onTap: () => _setAadhaar(isFront, null),
+                child: Container(
+                  padding: const EdgeInsets.all(5),
+                  decoration: const BoxDecoration(color: Colors.black54, shape: BoxShape.circle),
+                  child: const Icon(Icons.close_rounded, size: 14, color: Colors.white),
+                ),
+              )),
+              Positioned(bottom: 0, left: 0, right: 0, child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 5),
+                color: Colors.black54,
+                child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  const Icon(Icons.check_circle_rounded, size: 13, color: AppTheme.success),
+                  const SizedBox(width: 4),
+                  Text(label, style: const TextStyle(color: Colors.white, fontSize: 10.5, fontWeight: FontWeight.w700)),
+                ]),
+              )),
+            ])
+          : InkWell(
+              onTap: () => _captureAadhaar(isFront),
+              child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                Icon(icon, size: 30, color: context.tokens.textTertiary),
+                const SizedBox(height: 8),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Text(label, textAlign: TextAlign.center, style: context.typo.labelMedium?.copyWith(color: context.tokens.textSecondary, fontWeight: FontWeight.w700)),
+                ),
+                const SizedBox(height: 4),
+                Text('Tap to capture', style: context.typo.labelSmall?.copyWith(color: context.tokens.textTertiary, fontSize: 9.5)),
+              ]),
+            ),
+    );
+  }
+
+  /// Uploads captured documents after the member is created, showing a
+  /// non-dismissible progress dialog (back is disabled) with live percentage.
+  Future<void> _uploadDocuments(int memberId) async {
+    final pending = <(String, File)>[
+      if (_aadhaarFront != null) ('aadhaar_front', _aadhaarFront!),
+      if (_aadhaarBack != null) ('aadhaar_back', _aadhaarBack!),
+    ];
+    if (pending.isEmpty || !mounted) return;
+
+    double overall = 0;
+    String stageLabel = 'Preparing…';
+    StateSetter? setDialog;
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => PopScope(
+        canPop: false,
+        child: StatefulBuilder(
+          builder: (ctx, setD) {
+            setDialog = setD;
+            final pct = (overall * 100).clamp(0, 100).toInt();
+            final done = pct >= 100;
+            return AlertDialog(
+              title: Text(done ? 'Done' : 'Saving documents'),
+              content: Column(mainAxisSize: MainAxisSize.min, children: [
+                Text(done ? 'Documents saved successfully' : stageLabel,
+                    style: context.typo.bodySmall?.copyWith(color: context.tokens.textSecondary)),
+                const SizedBox(height: 16),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: LinearProgressIndicator(value: overall.clamp(0.0, 1.0), minHeight: 8, backgroundColor: context.tokens.surfaceAlt, color: AppTheme.brand),
+                ),
+                const SizedBox(height: 10),
+                Text('$pct%', style: context.typo.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
+                if (!done) ...[
+                  const SizedBox(height: 10),
+                  Text('Please wait, do not press back', style: context.typo.labelSmall?.copyWith(color: context.tokens.textTertiary)),
+                ],
+              ]),
+            );
+          },
+        ),
+      ),
+    );
+
+    void update(double v, String label) {
+      overall = v.clamp(0.0, 1.0);
+      stageLabel = label;
+      setDialog?.call(() {});
+    }
+
+    try {
+      final api = ref.read(apiClientProvider);
+      final per = 1.0 / pending.length;
+      for (var i = 0; i < pending.length; i++) {
+        final (docType, file) = pending[i];
+        final base = i * per;
+        update(base, docType == 'aadhaar_front' ? 'Uploading Aadhaar Front…' : 'Uploading Aadhaar Back…');
+        await api.uploadMemberDocument(memberId, docType, file, onProgress: (sent, total) {
+          final frac = total > 0 ? (sent / total) : 0;
+          update(base + frac * per, docType == 'aadhaar_front' ? 'Uploading Aadhaar Front…' : 'Uploading Aadhaar Back…');
+        });
+      }
+      update(1.0, 'Documents saved successfully');
+      await Future.delayed(const Duration(milliseconds: 700));
+    } catch (_) {
+      // Documents are optional — a failed upload must not fail the member add.
+    }
+
+    if (mounted) Navigator.of(context, rootNavigator: true).pop();
   }
 
   Widget _card(String title, IconData icon, Color color, List<Widget> children) {

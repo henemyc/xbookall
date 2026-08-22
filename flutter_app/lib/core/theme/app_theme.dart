@@ -10,30 +10,28 @@ class AppTheme {
   AppTheme._();
 
   // ── Brand accent — "Fire" gradient stops ─────────────────────────
-  static const Color brand = Color(0xFFFF6B2C); // primary orange
+  static const Color brand = Color(0xFFFF6B2C);     // primary orange
   static const Color brandDeep = Color(0xFFF43F1C); // deep ember red-orange
   static const Color brandAmber = Color(0xFFFFB020); // amber
-  static const Color brandGlow = Color(0xFFFF8A3D);
+  static const Color brandGlow = Color(0xFFFF8A3D); // glow
 
   static const LinearGradient fireGradient = LinearGradient(
-    begin: Alignment.topLeft,
-    end: Alignment.bottomRight,
-    colors: [Color(0xFFFF8A3D), Color(0xFFFF6B2C), Color(0xFFF43F1C)],
-  );
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [Color(0xFFFF8A3D), Color(0xFFFF6B2C), Color(0xFFF43F1C)],
+      );
 
   static const LinearGradient amberGradient = LinearGradient(
-    begin: Alignment.topLeft,
-    end: Alignment.bottomRight,
-    colors: [Color(0xFFFFC848), Color(0xFFFF8A3D)],
-  );
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [Color(0xFFFFC848), Color(0xFFFF8A3D)],
+      );
 
   static const LinearGradient darkHeroGradient = LinearGradient(
-    begin: Alignment.topLeft,
-    end: Alignment.bottomRight,
-    colors: [Color(0xFF241A15), Color(0xFF1A1210), Color(0xFF120C0A)],
-  );
-
-  // Reverted: always use dark hero gradient (light variant removed per user request)
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [Color(0xFF241A15), Color(0xFF1A1210), Color(0xFF120C0A)],
+      );
 
   // ── Semantic status colors (shared) ──────────────────────────────
   static const Color success = Color(0xFF16C784);
@@ -153,7 +151,7 @@ class AppTheme {
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide(color: t.border)),
         enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide(color: t.border)),
-        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: const BorderSide(color: brand, width: 1.6)),
+        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide(color: brand, width: 1.6)),
         errorBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: const BorderSide(color: danger)),
         focusedErrorBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: const BorderSide(color: danger, width: 1.6)),
         counterStyle: GoogleFonts.poppins(color: t.textTertiary, fontSize: 11),
@@ -193,7 +191,7 @@ class AppTheme {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
       ),
-      floatingActionButtonTheme: const FloatingActionButtonThemeData(
+      floatingActionButtonTheme: FloatingActionButtonThemeData(
         backgroundColor: brand,
         foregroundColor: Colors.white,
         elevation: 6,
@@ -217,9 +215,21 @@ class AppTheme {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
         titleTextStyle: textTheme.titleLarge,
       ),
-      progressIndicatorTheme: const ProgressIndicatorThemeData(color: brand),
+      progressIndicatorTheme: ProgressIndicatorThemeData(color: brand),
       dividerTheme: DividerThemeData(color: t.border, thickness: 1, space: 1),
       iconTheme: IconThemeData(color: t.textSecondary),
+      // Snappier page transitions across the whole app (pushed routes like
+      // member detail, check-in, reports, history, etc.).
+      pageTransitionsTheme: const PageTransitionsTheme(
+        builders: <TargetPlatform, PageTransitionsBuilder>{
+          TargetPlatform.android: _FastSlidePageTransitionsBuilder(),
+          TargetPlatform.iOS: _FastSlidePageTransitionsBuilder(),
+          TargetPlatform.macOS: _FastSlidePageTransitionsBuilder(),
+          TargetPlatform.windows: _FastSlidePageTransitionsBuilder(),
+          TargetPlatform.linux: _FastSlidePageTransitionsBuilder(),
+          TargetPlatform.fuchsia: _FastSlidePageTransitionsBuilder(),
+        },
+      ),
       extensions: [t],
     );
   }
@@ -264,7 +274,6 @@ class AppTheme {
   static const Color greenBg = Color(0x1A16C784);
   static const Color orange = warning;
   static const Color orangeBg = Color(0x1AFFA726);
-  static const Color blue = info;
   static const Color blueBg = Color(0x1A3B9EFF);
   static const Color expiringYellow = Color(0xFFD97706);
   static const Color expiringYellowBg = Color(0x1FD97706);
@@ -347,4 +356,35 @@ extension AppThemeX on BuildContext {
   List<BoxShadow> get subtleShadow => [
         BoxShadow(color: tokens.shadow, blurRadius: 12, offset: const Offset(0, 4), spreadRadius: -4),
       ];
+}
+
+// ════════════════════════════════════════════════════════════════
+//  FAST PAGE TRANSITIONS
+//  Shorter-than-default route animations for a snappier feel.
+// ════════════════════════════════════════════════════════════════
+const Duration kFastPageTransitionDuration = Duration(milliseconds: 150);
+
+/// Horizontal slide + subtle fade (Android / desktop). 150ms vs 300ms default.
+class _FastSlidePageTransitionsBuilder extends PageTransitionsBuilder {
+  const _FastSlidePageTransitionsBuilder();
+
+  @override
+  Duration get transitionDuration => kFastPageTransitionDuration;
+
+  @override
+  Widget buildTransitions<T>(
+    PageRoute<T> route,
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    final curved = CurvedAnimation(
+      parent: animation,
+      curve: Curves.easeOutCubic,
+      reverseCurve: Curves.easeInCubic,
+    );
+    final slide = Tween<Offset>(begin: const Offset(0.06, 0), end: Offset.zero).animate(curved);
+    return SlideTransition(position: slide, child: FadeTransition(opacity: curved, child: child));
+  }
 }

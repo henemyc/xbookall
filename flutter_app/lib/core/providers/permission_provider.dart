@@ -10,7 +10,9 @@ class PermissionService {
   final Map<String, dynamic>? user;
   const PermissionService(this.user);
 
-  bool get isStaff => (user?['type'] ?? '').toString() == 'staff';
+  String get userType => (user?['type'] ?? '').toString();
+  bool get isStaff => userType == 'staff';
+  bool get isTrainee => userType == 'trainee';
 
   List<String> get permissions {
     final raw = user?['permissions'];
@@ -19,12 +21,16 @@ class PermissionService {
   }
 
   bool can(String permission) {
+    // Members (trainees) never have gym-admin permissions — this is what
+    // previously let them see edit/delete on notices and other admin UI.
+    if (isTrainee) return false;
     if (!isStaff) return true;
     return permissions.contains(permission);
   }
 
   bool canAny(List<String> keys) {
+    if (isTrainee) return false;
     if (!isStaff) return true;
-    return keys.any(can);
+    return keys.any(permissions.contains);
   }
 }

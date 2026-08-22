@@ -27,7 +27,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         children: [
           Container(
             height: MediaQuery.of(context).size.height * 0.44,
-            decoration: const BoxDecoration(gradient: AppTheme.darkHeroGradient),
+            decoration: BoxDecoration(gradient: AppTheme.darkHeroGradient),
           ),
           Positioned(top: -60, right: -40, child: _glow(220, AppTheme.brand.withOpacity(0.5))),
           Positioned(top: 60, left: -70, child: _glow(180, AppTheme.brandDeep.withOpacity(0.35))),

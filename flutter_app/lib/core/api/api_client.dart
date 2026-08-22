@@ -22,7 +22,7 @@ class ApiClient {
   // Token: Authorization: Bearer
   // ========================================================
   static const String baseUrl = 'https://web.gymxbook.com/api';
-  static const String appVersion = '1.2.0';
+  static const String appVersion = '1.2.2';
   static String? _cachedToken;
   static final StreamController<void> _authExpiredController = StreamController<void>.broadcast();
   static Stream<void> get authExpired => _authExpiredController.stream;
@@ -113,8 +113,8 @@ class ApiClient {
     return _dio.get('/v1$path', queryParameters: query);
   }
 
-  Future<Response> postV1(String path, {dynamic data, Map<String, dynamic>? query}) async {
-    return _dio.post('/v1$path', data: data, queryParameters: query);
+  Future<Response> postV1(String path, {dynamic data, Map<String, dynamic>? query, ProgressCallback? onSendProgress}) async {
+    return _dio.post('/v1$path', data: data, queryParameters: query, onSendProgress: onSendProgress);
   }
 
   Future<Response> putV1(String path, {dynamic data, Map<String, dynamic>? query}) async {
@@ -132,6 +132,13 @@ class ApiClient {
   Future<Map<String, dynamic>> sendLoginOtp({required String phone}) async {
     final res = await postV1('/login/send-otp', data: {'phone': phone});
     return _unwrap(res.data);
+  }
+
+  /// Check whether an account exists for a phone number (login flow step 1).
+  Future<bool> checkAccountExists({required String phone}) async {
+    final res = await postV1('/login/check', data: {'phone': phone});
+    final data = _unwrap(res.data);
+    return data['exists'] == true || data['exists'].toString() == '1';
   }
 
   Future<Map<String, dynamic>> verifyLoginOtp({required String phone, required String otp}) async {
@@ -1031,6 +1038,29 @@ class ApiClient {
     final res = await postV1('/members/$memberId/photo', data: FormData.fromMap({
       'photo': await MultipartFile.fromFile(file.path, filename: file.uri.pathSegments.last),
     }));
+    return _unwrap(res.data);
+  }
+
+  // ── Member documents (Aadhaar front/back) ─────────────────────────
+  Future<Map<String, dynamic>> getMemberDocuments(int memberId) async {
+    final res = await getV1('/members/$memberId/documents');
+    return _unwrap(res.data);
+  }
+
+  Future<Map<String, dynamic>> uploadMemberDocument(int memberId, String docType, File file, {ProgressCallback? onProgress}) async {
+    final res = await postV1(
+      '/members/$memberId/documents',
+      data: FormData.fromMap({
+        'doc_type': docType,
+        'document': await MultipartFile.fromFile(file.path, filename: file.uri.pathSegments.last),
+      }),
+      onSendProgress: onProgress,
+    );
+    return _unwrap(res.data);
+  }
+
+  Future<Map<String, dynamic>> deleteMemberDocument(int memberId, String docType) async {
+    final res = await deleteV1('/members/$memberId/documents/$docType');
     return _unwrap(res.data);
   }
 

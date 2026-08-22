@@ -105,7 +105,7 @@ class _MembersListScreenState extends ConsumerState<MembersListScreen> {
                       child: Row(mainAxisSize: MainAxisSize.min, children: [
                         Text(_filterLabel(state.statusFilter), style: context.typo.labelMedium?.copyWith(color: AppTheme.brand, fontWeight: FontWeight.w700)),
                         const SizedBox(width: 4),
-                        const Icon(Icons.close_rounded, size: 13, color: AppTheme.brand),
+                        Icon(Icons.close_rounded, size: 13, color: AppTheme.brand),
                       ]),
                     ),
                   ),
@@ -198,7 +198,7 @@ class _MembersListScreenState extends ConsumerState<MembersListScreen> {
                                         ]),
                                       ),
                                       _openingMemberId == m.id
-                                          ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2.2, color: AppTheme.brand))
+                                          ? SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2.2, color: AppTheme.brand))
                                           : Icon(Icons.chevron_right_rounded, size: 20, color: context.tokens.textTertiary),
                                     ]),
                                   ),
@@ -310,7 +310,7 @@ class _MembersListScreenState extends ConsumerState<MembersListScreen> {
             Icon(icon, size: 20, color: active ? AppTheme.brand : context.tokens.textSecondary),
             const SizedBox(width: 12),
             Expanded(child: Text(label, style: context.typo.titleSmall?.copyWith(color: active ? AppTheme.brand : context.tokens.text))),
-            if (active) const Icon(Icons.check_circle_rounded, color: AppTheme.brand, size: 22),
+            if (active) Icon(Icons.check_circle_rounded, color: AppTheme.brand, size: 22),
           ]),
         ),
       ),

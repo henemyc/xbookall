@@ -9,12 +9,16 @@ class NotificationDeliveryService
     /**
      * Deliver a private in-app/FCM notification to exactly one user.
      * Used for member-specific events such as an assigned diet plan.
+     *
+     * parent_id is intentionally 0 so the row is visible ONLY to the target
+     * user (their scope matches on user_id) and never to the gym owner
+     * (owner scope matches on parent_id IN gym ids OR user_id = owner).
      */
-    public function notifyUser(int $userId, int $gymOwnerId, string $title, string $message, string $type = 'info', array $data = []): void
+    public function notifyUser(int $userId, string $title, string $message, string $type = 'info', array $data = []): void
     {
         try {
             $notificationId = DB::table('app_notifications')->insertGetId([
-                'parent_id' => $gymOwnerId,
+                'parent_id' => 0,
                 'user_id' => $userId,
                 'title' => $title,
                 'message' => $message,

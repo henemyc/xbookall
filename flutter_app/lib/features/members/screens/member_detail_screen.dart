@@ -32,6 +32,7 @@ class _MemberDetailScreenState extends ConsumerState<MemberDetailScreen> {
   List _invoices = [];
   List _payments = [];
   List _diets = [];
+  List _documents = [];
   bool loading = true;
   String? error;
 
@@ -60,6 +61,12 @@ class _MemberDetailScreenState extends ConsumerState<MemberDetailScreen> {
       } catch (_) {
         _diets = [];
       }
+      try {
+        final docResponse = await api.getMemberDocuments(widget.memberId);
+        _documents = (docResponse['documents'] as List?) ?? [];
+      } catch (_) {
+        _documents = [];
+      }
 
       // Fallback: if still empty, try dedicated endpoint
       if (_invoices.isEmpty && _payments.isEmpty) {
@@ -77,13 +84,26 @@ class _MemberDetailScreenState extends ConsumerState<MemberDetailScreen> {
   }
 
   String get _phone => (member?['phone_number'] ?? '').toString().trim();
+  List get _classes => (member!['assigned_classes'] as List?) ?? const [];
+  List get _health => (member!['health_records'] as List?) ?? const [];
+  List get _attendance => (member!['attendance_history'] as List?) ?? const [];
+  List get _freezeLogs => (member!['freeze_logs'] as List?) ?? const [];
+
+  Map<String, dynamic>? get _activeDiet {
+    for (final d in _diets) {
+      if (d is Map && (d['status'] ?? '').toString() == 'active') {
+        return Map<String, dynamic>.from(d);
+      }
+    }
+    return null;
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text(widget.memberName)),
       body: loading
-          ? const SkeletonList(count: 4)
+          ? const _MemberDetailSkeleton()
           : error != null
               ? ErrorRetry(message: 'Could not load member.', onRetry: _load)
               : member == null
@@ -98,29 +118,48 @@ class _MemberDetailScreenState extends ConsumerState<MemberDetailScreen> {
                           const SizedBox(height: 14),
                           FadeInUp(delayMs: 60, child: _actions()),
                           const SizedBox(height: 16),
-                          FadeInUp(delayMs: 100, child: _invoicesSection()),
-                          const SizedBox(height: 12),
-                          FadeInUp(delayMs: 130, child: _transactionsSection()),
-                          const SizedBox(height: 12),
-                          FadeInUp(delayMs: 160, child: _sectionCard('Assigned Classes', Icons.self_improvement_rounded, const Color(0xFFEC4899), (member!['assigned_classes'] as List?) ?? [], (list) {
-                            return Column(children: list.map((c) => _rowTile(Icons.check_circle_rounded, AppTheme.brand, c['title'] ?? '', '₹${c['fees'] ?? 0}')).toList());
-                          })),
-                          const SizedBox(height: 12),
-                          FadeInUp(delayMs: 180, child: _dietSummary()),
-                          const SizedBox(height: 12),
-                          FadeInUp(delayMs: 190, child: _healthSection()),
-                          const SizedBox(height: 12),
-                          FadeInUp(delayMs: 210, child: _sectionCard('Attendance History', Icons.fact_check_rounded, AppTheme.success, (member!['attendance_history'] as List?) ?? [], (list) {
-                            final preview = list.take(3).toList();
-                            return Column(children: [
-                              ...preview.map((a) => _rowTile(Icons.login_rounded, AppTheme.success, DateFormatter.formatDate(a['date']), '${DateFormatter.formatTime(a['checked_in_time'])} - ${DateFormatter.formatTime(a['checked_out_time'])}${(a['notes']?.contains('Auto checkout') ?? false) ? ' (Auto)' : ''}')),
-                              if (list.length > 3) _viewAll('View all ${list.length}', () => _showFullAttendance(list)),
-                            ]);
-                          })),
-                          const SizedBox(height: 12),
-                          FadeInUp(delayMs: 230, child: _sectionCard('Freeze History', Icons.ac_unit_rounded, AppTheme.info, (member!['freeze_logs'] as List?) ?? [], (list) {
-                            return Column(children: list.map((f) => _rowTile(Icons.pause_circle_rounded, AppTheme.info, '${DateFormatter.formatDate(f['freeze_start_date'])} → ${DateFormatter.formatDate(f['freeze_end_date'])}', '${f['freeze_days']} days${(f['remarks'] ?? '').toString().isNotEmpty ? ' • ${f['remarks']}' : ''}')).toList());
-                          })),
+                          // Only show sections that actually have data.
+                          if (_invoices.isNotEmpty) ...[
+                            FadeInUp(delayMs: 100, child: _invoicesSection()),
+                            const SizedBox(height: 12),
+                          ],
+                          if (_payments.isNotEmpty) ...[
+                            FadeInUp(delayMs: 120, child: _transactionsSection()),
+                            const SizedBox(height: 12),
+                          ],
+                          if (_classes.isNotEmpty) ...[
+                            FadeInUp(delayMs: 140, child: _sectionCard('Assigned Classes', Icons.self_improvement_rounded, const Color(0xFFEC4899), _classes, (list) {
+                              return Column(children: list.map((c) => _rowTile(Icons.check_circle_rounded, AppTheme.brand, c['title'] ?? '', '₹${c['fees'] ?? 0}')).toList());
+                            })),
+                            const SizedBox(height: 12),
+                          ],
+                          if (_activeDiet != null) ...[
+                            FadeInUp(delayMs: 160, child: _dietSection()),
+                            const SizedBox(height: 12),
+                          ],
+                          if (_health.isNotEmpty) ...[
+                            FadeInUp(delayMs: 180, child: _healthSection()),
+                            const SizedBox(height: 12),
+                          ],
+                          if (_attendance.isNotEmpty) ...[
+                            FadeInUp(delayMs: 200, child: _sectionCard('Attendance History', Icons.fact_check_rounded, AppTheme.success, _attendance, (list) {
+                              final preview = list.take(3).toList();
+                              return Column(children: [
+                                ...preview.map((a) => _rowTile(Icons.login_rounded, AppTheme.success, DateFormatter.formatDate(a['date']), '${DateFormatter.formatTime(a['checked_in_time'])} - ${DateFormatter.formatTime(a['checked_out_time'])}${(a['notes']?.contains('Auto checkout') ?? false) ? ' (Auto)' : ''}')),
+                                if (list.length > 3) _viewAll('View all ${list.length}', () => _showFullAttendance(list)),
+                              ]);
+                            })),
+                            const SizedBox(height: 12),
+                          ],
+                          if (_freezeLogs.isNotEmpty) ...[
+                            FadeInUp(delayMs: 220, child: _sectionCard('Freeze History', Icons.ac_unit_rounded, AppTheme.info, _freezeLogs, (list) {
+                              return Column(children: list.map((f) => _rowTile(Icons.pause_circle_rounded, AppTheme.info, '${DateFormatter.formatDate(f['freeze_start_date'])} → ${DateFormatter.formatDate(f['freeze_end_date'])}', '${f['freeze_days']} days${(f['remarks'] ?? '').toString().isNotEmpty ? ' • ${f['remarks']}' : ''}')).toList());
+                            })),
+                            const SizedBox(height: 12),
+                          ],
+                          if (_documents.isNotEmpty) ...[
+                            FadeInUp(delayMs: 240, child: _documentsSection()),
+                          ],
                           // Destructive actions are kept inside the compact More sheet above.
                         ],
                       ),
@@ -218,34 +257,107 @@ class _MemberDetailScreenState extends ConsumerState<MemberDetailScreen> {
     );
   }
 
+  // ── Header: "Member C" — membership-progress hero (dark) ─────────
   Widget _header() {
-    final expiry = DateFormatter.formatDate(member!['membership_expiry_date']);
     final frozen = member!['trainee_status'] == 3;
+    final hasPhoto = (member?['profile'] ?? '').toString().isNotEmpty;
+    final planName = (member!['plan_name'] ?? 'No Plan').toString();
+    final expiryRaw = (member!['membership_expiry_date'] ?? '').toString();
+    final (daysLeft, remaining) = _planStatus(member!['membership_start_date'], member!['membership_expiry_date']);
+
     return Container(
-      padding: const EdgeInsets.fromLTRB(22, 30, 22, 24),
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(colors: [Color(0xFF030303), Color(0xFF15151A), Color(0xFF0B1624)], begin: Alignment.topCenter, end: Alignment.bottomCenter),
-        borderRadius: BorderRadius.circular(32),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(.26), blurRadius: 28, offset: const Offset(0, 12))],
+        gradient: const LinearGradient(colors: [Color(0xFF101318), Color(0xFF0A0D12)], begin: Alignment.topCenter, end: Alignment.bottomCenter),
+        borderRadius: BorderRadius.circular(26),
       ),
-      child: Column(children: [
-        Stack(clipBehavior: Clip.none, children: [
-          Container(padding: const EdgeInsets.all(4), decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: AppTheme.brandAmber.withOpacity(.9), width: 2), boxShadow: [BoxShadow(color: AppTheme.brand.withOpacity(.35), blurRadius: 22)]), child: Pressable(radius: 52, onTap: () { final hasPhoto=(member?['profile']??'').toString().isNotEmpty; if(hasPhoto)_showPhotoViewer();else _showPhotoOptions(); }, child: Hero(tag: 'member-photo-${widget.memberId}', child: GxAvatar(name: member!['name'] ?? 'M', imageUrl: member!['profile_photo_url']?.toString(), size: 104)))),
-          if (ref.watch(permissionProvider).can('members.edit')) Positioned(right: 0, bottom: 2, child: Pressable(radius: 18, onTap: _showPhotoOptions, child: Container(width: 34,height:34,decoration:BoxDecoration(color:AppTheme.brand,shape:BoxShape.circle,border:Border.all(color:Colors.white,width:2)),child:const Icon(Icons.camera_alt_rounded,size:16,color:Colors.white)))),
-        ]),
-        const SizedBox(height: 14),
-        Text(member!['name'] ?? '', textAlign: TextAlign.center, style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w800)),
-        const SizedBox(height: 4),
-        Text(_phone.isEmpty ? 'Member Profile' : _phone, style: GoogleFonts.poppins(color: Colors.white70, fontSize: 13)),
-        const SizedBox(height: 14),
-        Wrap(alignment: WrapAlignment.center, spacing: 8, runSpacing: 8, children: [
-          _heroPill(Icons.card_membership_rounded, member!['plan_name'] ?? 'No Plan', AppTheme.brandAmber),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Stack(clipBehavior: Clip.none, children: [
+            Container(
+              padding: const EdgeInsets.all(3),
+              decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: AppTheme.brandAmber.withOpacity(.9), width: 2)),
+              child: Pressable(
+                radius: 24,
+                onTap: () { if (hasPhoto) _showPhotoViewer(); else _showPhotoOptions(); },
+                child: Hero(tag: 'member-photo-${widget.memberId}', child: GxAvatar(name: member!['name'] ?? 'M', imageUrl: member!['profile_photo_url']?.toString(), size: 46, circular: true)),
+              ),
+            ),
+            if (ref.watch(permissionProvider).can('members.edit'))
+              Positioned(right: -3, bottom: -3, child: Pressable(radius: 13, onTap: _showPhotoOptions, child: Container(width: 24, height: 24, decoration: BoxDecoration(color: AppTheme.brand, shape: BoxShape.circle, border: Border.all(color: const Color(0xFF0A0D12), width: 2)), child: const Icon(Icons.camera_alt_rounded, size: 12, color: Colors.white)))),
+          ]),
+          const SizedBox(width: 12),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(member!['name'] ?? '', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w800), maxLines: 1, overflow: TextOverflow.ellipsis),
+            const SizedBox(height: 2),
+            Text(_phone.isEmpty ? 'Member profile' : _phone, style: GoogleFonts.poppins(color: Colors.white60, fontSize: 11.5)),
+          ])),
           _heroPill(frozen ? Icons.ac_unit_rounded : Icons.verified_rounded, frozen ? 'Frozen' : 'Active', frozen ? AppTheme.info : AppTheme.success),
-          _heroPill(Icons.event_rounded, expiry, Colors.white70),
         ]),
-        if (_phone.isNotEmpty) ...[const SizedBox(height: 18), Row(mainAxisAlignment: MainAxisAlignment.center, children: [_roundContact(Icons.call_rounded, AppTheme.success, _callMember), const SizedBox(width: 16), _roundContact(Icons.chat_rounded, const Color(0xFF25D366), _whatsappMember)])],
+        const SizedBox(height: 16),
+        Row(children: [
+          Text(planName, style: GoogleFonts.poppins(color: AppTheme.brandAmber, fontSize: 12.5, fontWeight: FontWeight.w700)),
+          const Spacer(),
+          if (expiryRaw.isNotEmpty) Text('Expires ${DateFormatter.formatDate(expiryRaw)}', style: GoogleFonts.poppins(color: Colors.white60, fontSize: 11)),
+        ]),
+        const SizedBox(height: 8),
+        ClipRRect(borderRadius: BorderRadius.circular(6), child: LinearProgressIndicator(value: remaining, minHeight: 8, backgroundColor: Colors.white.withOpacity(.12), color: _planBarColor(daysLeft, remaining, frozen))),
+        const SizedBox(height: 6),
+        Text(_planLabel(daysLeft, remaining, frozen), style: GoogleFonts.poppins(color: Colors.white54, fontSize: 10.5)),
+        if (_phone.isNotEmpty) ...[
+          const SizedBox(height: 14),
+          Row(children: [
+            Expanded(child: _contactPill(Icons.call_rounded, 'Call', AppTheme.success, _callMember)),
+            const SizedBox(width: 10),
+            Expanded(child: _contactPill(Icons.chat_rounded, 'WhatsApp', const Color(0xFF25D366), _whatsappMember)),
+          ]),
+        ],
       ]),
     );
+  }
+
+  // Returns (daysLeft, remaining). remaining is the fraction of the plan still
+  // left (reversed vs "used"): 1.0 = just started, 0.0 = fully used/expired.
+  (int, double) _planStatus(dynamic startRaw, dynamic expiryRaw) {
+    final end = DateTime.tryParse((expiryRaw ?? '').toString());
+    final now = DateTime.now();
+    if (end == null) return (0, 0);
+    final daysLeft = end.difference(now).inDays;
+    if (daysLeft < 0) return (daysLeft, 0); // expired → empty bar
+    final start = DateTime.tryParse((startRaw ?? '').toString());
+    if (start != null && end.isAfter(start)) {
+      final total = end.difference(start).inDays;
+      if (total <= 0) return (daysLeft, 0);
+      return (daysLeft, (daysLeft / total).clamp(0.0, 1.0).toDouble());
+    }
+    // Older records without a start date: approximate from days left.
+    return (daysLeft, (daysLeft / 30.0).clamp(0.0, 1.0).toDouble());
+  }
+
+  Color _planBarColor(int daysLeft, double remaining, bool frozen) {
+    if (frozen) return AppTheme.info;
+    if (daysLeft < 0) return Colors.white24; // expired → empty (track shows nothing)
+    if (daysLeft <= 7) return AppTheme.danger; // expiring soon → red
+    if (remaining >= 0.9) return AppTheme.success; // 0-10% used → green
+    return AppTheme.warning; // in between → orange
+  }
+
+  String _planLabel(int daysLeft, double remaining, bool frozen) {
+    if (frozen) return 'Membership frozen';
+    if (daysLeft < 0) return 'Plan expired';
+    return '$daysLeft days remaining · ${(remaining * 100).round()}% left';
+  }
+
+  Widget _contactPill(IconData icon, String label, Color color, VoidCallback onTap) {
+    return Pressable(radius: 12, onTap: onTap, child: Container(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      decoration: BoxDecoration(color: color.withOpacity(.16), borderRadius: BorderRadius.circular(12), border: Border.all(color: color.withOpacity(.35))),
+      child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+        Icon(icon, size: 16, color: color),
+        const SizedBox(width: 6),
+        Text(label, style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 12)),
+      ]),
+    ));
   }
 
   Widget _heroPill(IconData icon, String label, Color color) => Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6), decoration: BoxDecoration(color: color.withOpacity(.14), borderRadius: BorderRadius.circular(20), border: Border.all(color: color.withOpacity(.28))), child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(icon, size: 13, color: color), const SizedBox(width: 5), Text(label, style: GoogleFonts.poppins(color: Colors.white, fontSize: 10.5, fontWeight: FontWeight.w600))]));
@@ -279,51 +391,452 @@ class _MemberDetailScreenState extends ConsumerState<MemberDetailScreen> {
     ));
   }
 
+  // ── Quick actions — "Style D" tonal tiles (Material icons) ──────
   Widget _actions() {
     final frozen = member!['trainee_status'] == 3;
     final permissions = ref.watch(permissionProvider);
-    final actions = <Widget>[
-      if (permissions.can('members.renew')) _actionOrb(Icons.autorenew_rounded, 'Renew', AppTheme.brand, _showRenewSheet),
-      if (permissions.can('members.edit')) _actionOrb(Icons.edit_rounded, 'Edit', AppTheme.info, _editMember),
-      _actionOrb(Icons.fitness_center_rounded, 'Workout', AppTheme.warning, _showWorkoutSheet),
-      if (permissions.can('diets.assign')) _actionOrb(Icons.restaurant_menu_rounded, 'Diet', AppTheme.success, _assignDiet),
-      if (permissions.can('members.freeze') || permissions.can('members.delete')) _actionOrb(Icons.more_horiz_rounded, 'More', context.tokens.textSecondary, () => _showMemberMore(frozen, permissions)),
+
+    final tiles = <Widget>[
+      if (permissions.can('members.renew')) _actionTile(Icons.autorenew_rounded, 'Renew', 'Extend plan', _showRenewSheet),
+      if (permissions.can('members.edit')) _actionTile(Icons.edit_rounded, 'Edit', 'Update profile', _editMember),
+      _actionTile(Icons.fitness_center_rounded, 'Workout', 'Assign plan', _showWorkoutSheet),
+      if (permissions.can('diets.assign')) _actionTile(Icons.restaurant_menu_rounded, 'Diet', 'Nutrition plan', _assignDiet),
     ];
-    return Container(padding: const EdgeInsets.symmetric(vertical: 4), child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: actions));
+
+    final children = <Widget>[];
+    for (var i = 0; i < tiles.length; i += 2) {
+      if (i + 1 < tiles.length) {
+        children.add(Row(children: [
+          Expanded(child: tiles[i]),
+          const SizedBox(width: 10),
+          Expanded(child: tiles[i + 1]),
+        ]));
+        children.add(const SizedBox(height: 10));
+      } else {
+        children.add(tiles[i]);
+      }
+    }
+
+    if (permissions.can('members.freeze') || permissions.can('members.delete')) {
+      children.add(const SizedBox(height: 10));
+      children.add(_moreTile(frozen, permissions));
+    }
+
+    return Column(children: children);
   }
 
-  Widget _actionOrb(IconData icon, String label, Color color, VoidCallback onTap) => Column(mainAxisSize: MainAxisSize.min, children: [
-    Pressable(radius: 24, onTap: onTap, child: Container(width: 48, height: 48, decoration: BoxDecoration(color: color.withOpacity(.12), shape: BoxShape.circle), child: Icon(icon, color: color))),
-    const SizedBox(height: 5), Text(label, style: context.typo.labelSmall),
-  ]);
+  Widget _actionTile(IconData icon, String title, String subtitle, VoidCallback onTap) {
+    final t = context.tokens;
+    return Pressable(radius: 16, onTap: onTap, child: Container(
+      padding: const EdgeInsets.all(13),
+      decoration: BoxDecoration(color: t.surface, borderRadius: BorderRadius.circular(16), border: Border.all(color: t.border), boxShadow: context.subtleShadow),
+      child: Row(children: [
+        Container(
+          width: 38, height: 38,
+          decoration: BoxDecoration(color: t.surfaceAlt, borderRadius: BorderRadius.circular(12), border: Border.all(color: t.border)),
+          child: Icon(icon, color: t.textSecondary, size: 18),
+        ),
+        const SizedBox(width: 10),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(title, style: context.typo.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+          const SizedBox(height: 1),
+          Text(subtitle, style: context.typo.bodySmall?.copyWith(color: t.textTertiary, fontSize: 10.5), maxLines: 1, overflow: TextOverflow.ellipsis),
+        ])),
+      ]),
+    ));
+  }
 
+  Widget _moreTile(bool frozen, dynamic permissions) {
+    final t = context.tokens;
+    return Pressable(radius: 16, onTap: () => _showMemberMore(frozen, permissions), child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
+      decoration: BoxDecoration(color: t.surface, borderRadius: BorderRadius.circular(16), border: Border.all(color: t.border), boxShadow: context.subtleShadow),
+      child: Row(children: [
+        Container(
+          width: 38, height: 38,
+          decoration: BoxDecoration(color: t.surfaceAlt, borderRadius: BorderRadius.circular(12), border: Border.all(color: t.border)),
+          child: Icon(Icons.more_horiz_rounded, color: t.textSecondary, size: 18),
+        ),
+        const SizedBox(width: 10),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('More', style: context.typo.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+          const SizedBox(height: 1),
+          Text('Freeze · locker · delete', style: context.typo.bodySmall?.copyWith(color: t.textTertiary, fontSize: 10.5)),
+        ])),
+        Icon(Icons.chevron_right_rounded, color: t.textTertiary, size: 18),
+      ]),
+    ));
+  }
+
+  // Quick action: assign a new diet, or open the editor if one already exists.
   void _assignDiet() async {
-    final result = await Navigator.push(context, MaterialPageRoute(builder: (_) => AssignMemberDietScreen(memberId: widget.memberId, memberName: widget.memberName)));
-    if (result == true && mounted) { Toast.success(context, 'Diet plan assigned'); _load(); }
+    final diet = _activeDiet;
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => AssignMemberDietScreen(
+        memberId: widget.memberId,
+        memberName: widget.memberName,
+        existingDiet: diet,
+      )),
+    );
+    if (result == true && mounted) {
+      Toast.success(context, diet == null ? 'Diet plan assigned' : 'Diet updated');
+      _load();
+    }
   }
 
   void _showMemberMore(bool frozen, dynamic permissions) {
     showAppSheet(context, child: Padding(padding: const EdgeInsets.fromLTRB(20, 8, 20, 24), child: Column(mainAxisSize: MainAxisSize.min, children: [
       Text('Member Actions', style: context.typo.titleLarge), const SizedBox(height: 12),
       if (permissions.can('members.freeze')) ListTile(leading: Icon(frozen ? Icons.play_circle_rounded : Icons.ac_unit_rounded), title: Text(frozen ? 'Unfreeze Membership' : 'Freeze Membership'), onTap: () { Navigator.pop(context); _showFreezeSheet(); }),
+      ListTile(leading: const Icon(Icons.lock_outline_rounded, color: Color(0xFF10B981)), title: const Text('Assign Locker'), onTap: () { Navigator.pop(context); _showAssignLockerSheet(); }),
+      if (permissions.can('members.edit')) ListTile(leading: const Icon(Icons.badge_rounded, color: Color(0xFF6366F1)), title: const Text('Documents (Aadhaar)'), onTap: () { Navigator.pop(context); _showDocumentsSheet(); }),
       if (permissions.can('members.delete')) ListTile(leading: const Icon(Icons.delete_outline_rounded, color: AppTheme.danger), title: Text('Delete Member', style: context.typo.titleMedium?.copyWith(color: AppTheme.danger)), onTap: () { Navigator.pop(context); _hardDelete(); }),
     ])));
   }
 
-  Widget _dietSummary() {
-    final active = _diets.where((d) => (d['status'] ?? '').toString() == 'active').cast<dynamic>().toList();
-    final diet = active.isNotEmpty ? Map<String, dynamic>.from(active.first as Map) : null;
-    return SurfaceCard(onTap: diet == null ? null : () => Navigator.push(context, MaterialPageRoute(builder: (_) => MemberDietDetailScreen(diet: diet, memberName: widget.memberName))), child: Row(children: [
-      IconBadge(Icons.restaurant_menu_rounded, color: AppTheme.success, size: 42),
-      const SizedBox(width: 12),
-      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+  // Diet card — same layout as the other section cards (no badges, no inline edit).
+  Widget _dietSection() {
+    final diet = _activeDiet;
+    if (diet == null) return const SizedBox.shrink();
+    return SurfaceCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        IconBadge(Icons.restaurant_menu_rounded, color: AppTheme.success, size: 36, iconSize: 18),
+        const SizedBox(width: 10),
         Text('Diet Plan', style: context.typo.titleMedium),
-        const SizedBox(height: 3),
-        Text(diet == null ? 'No active diet assigned' : (diet['title'] ?? 'Active Diet').toString(), style: context.typo.bodySmall?.copyWith(color: context.tokens.textTertiary)),
-        if (diet != null && (diet['goal'] ?? '').toString().isNotEmpty) Text(diet['goal'], style: context.typo.bodySmall?.copyWith(color: AppTheme.success)),
+      ]),
+      const SizedBox(height: 10),
+      Pressable(radius: 14, onTap: () => _showDietOptions(diet), child: Row(children: [
+        Icon(Icons.restaurant_rounded, size: 18, color: context.tokens.textSecondary),
+        const SizedBox(width: 12),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text((diet['title'] ?? 'Active Diet').toString(), style: context.typo.titleSmall?.copyWith(fontSize: 13.5), maxLines: 1, overflow: TextOverflow.ellipsis),
+          if ((diet['goal'] ?? '').toString().isNotEmpty) ...[
+            const SizedBox(height: 2),
+            Text((diet['goal'] ?? '').toString(), style: context.typo.bodySmall?.copyWith(color: context.tokens.textTertiary, fontSize: 11.5), maxLines: 1, overflow: TextOverflow.ellipsis),
+          ],
+        ])),
+        Icon(Icons.chevron_right_rounded, color: context.tokens.textTertiary),
       ])),
-      if (diet != null) StatusBadge('ACTIVE', color: AppTheme.success),
     ]));
+  }
+
+  void _showDietOptions(Map<String, dynamic> diet) {
+    final permissions = ref.read(permissionProvider);
+    final canEdit = permissions.can('diets.edit');
+    showAppSheet(context, child: Padding(padding: const EdgeInsets.fromLTRB(20, 8, 20, 24), child: Column(mainAxisSize: MainAxisSize.min, children: [
+      Text('Diet Plan', style: context.typo.titleLarge),
+      const SizedBox(height: 12),
+      ListTile(
+        leading: IconBadge(Icons.visibility_rounded, color: AppTheme.success),
+        title: const Text('View Diet'),
+        onTap: () { Navigator.pop(context); Navigator.push(context, MaterialPageRoute(builder: (_) => MemberDietDetailScreen(diet: diet, memberName: widget.memberName))); },
+      ),
+      if (canEdit) ListTile(
+        leading: IconBadge(Icons.edit_rounded, color: AppTheme.brand),
+        title: const Text('Edit Diet'),
+        onTap: () { Navigator.pop(context); _editDiet(diet); },
+      ),
+      ListTile(
+        leading: IconBadge(Icons.add_rounded, color: AppTheme.info),
+        title: const Text('Assign New Diet'),
+        onTap: () { Navigator.pop(context); _assignDiet(); },
+      ),
+    ])));
+  }
+
+  Future<void> _editDiet(Map<String, dynamic> diet) async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => AssignMemberDietScreen(memberId: widget.memberId, memberName: widget.memberName, existingDiet: diet)),
+    );
+    if (result == true && mounted) {
+      Toast.success(context, 'Diet updated');
+      _load();
+    }
+  }
+
+  // ── Documents (Aadhaar front/back) ────────────────────────────────
+  Map<String, dynamic>? _documentOf(String docType) {
+    for (final d in _documents) {
+      if (d is Map && (d['doc_type'] ?? '').toString() == docType) {
+        return Map<String, dynamic>.from(d);
+      }
+    }
+    return null;
+  }
+
+  Widget _documentsSection() {
+    final front = _documentOf('aadhaar_front');
+    final back = _documentOf('aadhaar_back');
+    final tiles = <Widget>[
+      _documentTile('Aadhaar Front', front),
+      _documentTile('Aadhaar Back', back),
+    ];
+    return SurfaceCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        IconBadge(Icons.badge_rounded, color: const Color(0xFF6366F1), size: 36, iconSize: 18),
+        const SizedBox(width: 10),
+        Text('Documents', style: context.typo.titleMedium),
+      ]),
+      const SizedBox(height: 12),
+      Row(children: [
+        Expanded(child: tiles[0]),
+        const SizedBox(width: 12),
+        Expanded(child: tiles[1]),
+      ]),
+    ]));
+  }
+
+  Widget _documentTile(String label, Map<String, dynamic>? doc) {
+    final url = (doc?['url'] ?? '').toString();
+    return Container(
+      height: 130,
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: context.tokens.surfaceAlt,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: context.tokens.border),
+      ),
+      child: url.isNotEmpty
+          ? Stack(fit: StackFit.expand, children: [
+              Image.network(url, fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => const Icon(Icons.image_not_supported_rounded, color: Colors.black26),
+                loadingBuilder: (_, child, progress) => progress == null ? child : const Center(child: SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2))),
+              ),
+              Positioned(bottom: 0, left: 0, right: 0, child: Container(
+                color: Colors.black54,
+                padding: const EdgeInsets.symmetric(vertical: 5),
+                child: Text(label, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 10.5, fontWeight: FontWeight.w700)),
+              )),
+              Positioned.fill(child: Material(color: Colors.transparent, child: InkWell(onTap: () => _showDocumentViewer(url, label)))),
+              Positioned(top: 4, right: 4, child: InkWell(
+                onTap: () => _deleteDocument(label, doc),
+                child: Container(padding: const EdgeInsets.all(5), decoration: const BoxDecoration(color: Colors.black54, shape: BoxShape.circle), child: const Icon(Icons.delete_outline_rounded, size: 14, color: Colors.white)),
+              )),
+            ])
+          : Center(child: Padding(
+              padding: const EdgeInsets.all(8),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.badge_outlined, size: 26, color: context.tokens.textTertiary),
+                const SizedBox(height: 4),
+                Text('$label — not uploaded', textAlign: TextAlign.center, style: context.typo.labelSmall?.copyWith(color: context.tokens.textTertiary, fontSize: 9.5)),
+              ]),
+            )),
+    );
+  }
+
+  void _showDocumentViewer(String url, String label) {
+    showGeneralDialog(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'Close',
+      barrierColor: Colors.black.withOpacity(.4),
+      pageBuilder: (_, __, ___) => BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+        child: GestureDetector(
+          onTap: () => Navigator.pop(context),
+          child: Center(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Text(label, style: GoogleFonts.poppins(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w700)),
+              ),
+              FractionallySizedBox(
+                widthFactor: .88,
+                child: ClipRRect(borderRadius: BorderRadius.circular(14), child: InteractiveViewer(child: Image.network(url, fit: BoxFit.contain))),
+              ),
+            ]),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _deleteDocument(String label, Map<String, dynamic>? doc) async {
+    final docType = (doc?['doc_type'] ?? '').toString();
+    if (docType.isEmpty) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Remove $label?'),
+        content: const Text('This document will be permanently deleted.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: AppTheme.danger), onPressed: () => Navigator.pop(ctx, true), child: const Text('Remove')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await ref.read(apiClientProvider).deleteMemberDocument(widget.memberId, docType);
+      if (!mounted) return;
+      setState(() => _documents = _documents.where((d) => !(d is Map && (d['doc_type'] ?? '').toString() == docType)).toList());
+      Toast.success(context, 'Document removed');
+    } catch (_) {
+      if (mounted) Toast.error(context, 'Could not remove document');
+    }
+  }
+
+  // ── Documents manager (capture/retake/remove for existing members) ─
+  void _showDocumentsSheet() {
+    showAppSheet(context, child: Padding(
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+      child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          IconBadge(Icons.badge_rounded, color: const Color(0xFF6366F1), size: 42, iconSize: 20),
+          const SizedBox(width: 12),
+          Expanded(child: Text('Documents (Aadhaar)', style: context.typo.titleLarge)),
+        ]),
+        const SizedBox(height: 6),
+        Text('Capture or update the member\u2019s Aadhaar card.', style: context.typo.bodySmall?.copyWith(color: context.tokens.textTertiary)),
+        const SizedBox(height: 16),
+        Row(children: [
+          Expanded(child: _docActionTile('aadhaar_front', 'Aadhaar Front')),
+          const SizedBox(width: 12),
+          Expanded(child: _docActionTile('aadhaar_back', 'Aadhaar Back')),
+        ]),
+      ]),
+    ));
+  }
+
+  Widget _docMiniBtn(IconData icon, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(6),
+        decoration: const BoxDecoration(color: Colors.black54, shape: BoxShape.circle),
+        child: Icon(icon, size: 15, color: Colors.white),
+      ),
+    );
+  }
+
+  Widget _docActionTile(String docType, String label) {
+    final doc = _documentOf(docType);
+    final url = (doc?['url'] ?? '').toString();
+    return Container(
+      height: 150,
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: context.tokens.surfaceAlt,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: url.isNotEmpty ? AppTheme.success.withOpacity(.5) : context.tokens.border),
+      ),
+      child: url.isNotEmpty
+          ? Stack(fit: StackFit.expand, children: [
+              Image.network(url, fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => const Icon(Icons.image_not_supported_rounded, color: Colors.black26),
+                loadingBuilder: (_, child, progress) => progress == null ? child : const Center(child: SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2))),
+              ),
+              Positioned.fill(child: Material(color: Colors.transparent, child: InkWell(onTap: () => _showDocumentViewer(url, label)))),
+              Positioned(bottom: 0, left: 0, right: 0, child: Container(
+                color: Colors.black54,
+                padding: const EdgeInsets.symmetric(vertical: 5),
+                child: Text(label, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 10.5, fontWeight: FontWeight.w700)),
+              )),
+              Positioned(top: 6, right: 6, child: Row(children: [
+                _docMiniBtn(Icons.refresh_rounded, () => _captureDocument(docType, label)),
+                const SizedBox(width: 6),
+                _docMiniBtn(Icons.delete_outline_rounded, () => _deleteDocument(label, doc)),
+              ])),
+            ])
+          : InkWell(
+              onTap: () => _captureDocument(docType, label),
+              child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                Icon(Icons.add_a_photo_rounded, size: 30, color: context.tokens.textTertiary),
+                const SizedBox(height: 8),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Text(label, textAlign: TextAlign.center, style: context.typo.labelMedium?.copyWith(color: context.tokens.textSecondary, fontWeight: FontWeight.w700)),
+                ),
+                const SizedBox(height: 4),
+                Text('Tap to capture', style: context.typo.labelSmall?.copyWith(color: context.tokens.textTertiary, fontSize: 9.5)),
+              ]),
+            ),
+    );
+  }
+
+  Future<void> _captureDocument(String docType, String label) async {
+    try {
+      // Compress/downscale at capture so the upload is small and fast.
+      final image = await ImagePicker().pickImage(source: ImageSource.camera, imageQuality: 80, maxWidth: 1600, maxHeight: 1000);
+      if (image == null) return;
+      final cropped = await ImageCropper().cropImage(
+        sourcePath: image.path,
+        aspectRatio: const CropAspectRatio(ratioX: 159, ratioY: 100),
+        uiSettings: [
+          AndroidUiSettings(toolbarTitle: 'Crop $label', lockAspectRatio: true),
+          IOSUiSettings(title: 'Crop $label', aspectRatioLockEnabled: true),
+        ],
+      );
+      if (cropped == null) return;
+      await _uploadDocument(docType, File(cropped.path), label);
+    } catch (_) {
+      if (mounted) Toast.error(context, 'Could not capture document');
+    }
+  }
+
+  /// Uploads a single document with a live progress dialog (back disabled).
+  Future<void> _uploadDocument(String docType, File file, String label) async {
+    if (!mounted) return;
+    double progress = 0;
+    StateSetter? setDialog;
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => PopScope(
+        canPop: false,
+        child: StatefulBuilder(
+          builder: (ctx, setD) {
+            setDialog = setD;
+            final pct = (progress * 100).clamp(0, 100).toInt();
+            final done = pct >= 100;
+            return AlertDialog(
+              title: Text(done ? 'Done' : 'Saving document'),
+              content: Column(mainAxisSize: MainAxisSize.min, children: [
+                Text(done ? '$label saved' : 'Uploading $label…', style: context.typo.bodySmall?.copyWith(color: context.tokens.textSecondary)),
+                const SizedBox(height: 16),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: LinearProgressIndicator(value: progress.clamp(0.0, 1.0), minHeight: 8, backgroundColor: context.tokens.surfaceAlt, color: AppTheme.brand),
+                ),
+                const SizedBox(height: 10),
+                Text('$pct%', style: context.typo.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
+                if (!done) ...[
+                  const SizedBox(height: 10),
+                  Text('Please wait, do not press back', style: context.typo.labelSmall?.copyWith(color: context.tokens.textTertiary)),
+                ],
+              ]),
+            );
+          },
+        ),
+      ),
+    );
+
+    try {
+      await ref.read(apiClientProvider).uploadMemberDocument(widget.memberId, docType, file, onProgress: (sent, total) {
+        final frac = total > 0 ? (sent / total) : 0;
+        progress = frac.clamp(0.0, 1.0);
+        setDialog?.call(() {});
+      });
+      progress = 1.0;
+      setDialog?.call(() {});
+      await Future.delayed(const Duration(milliseconds: 700));
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
+
+      // Refresh documents so the inline section + sheet update.
+      try {
+        final res = await ref.read(apiClientProvider).getMemberDocuments(widget.memberId);
+        if (mounted) setState(() => _documents = (res['documents'] as List?) ?? []);
+      } catch (_) {}
+      if (mounted) Toast.success(context, '$label saved');
+    } catch (_) {
+      if (mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+        Toast.error(context, 'Could not upload document');
+      }
+    }
   }
 
   // ── Invoices of this member ───────────────────────────────────────
@@ -867,15 +1380,15 @@ class _MemberDetailScreenState extends ConsumerState<MemberDetailScreen> {
               icon: Icons.lock_rounded,
               onPressed: selectedLocker == null ? null : () async {
                 try {
-              // Laravel REST: POST /v1/lockers/assign
-              await ref.read(apiClientProvider).assignLocker({
-                'user_id': widget.memberId,
-                'locker_id': selectedLocker,
-                'assign_date': DateTime.now().toIso8601String().split('T')[0],
-              });
-              if (mounted) Navigator.pop(ctx);
-              if (mounted) Toast.success(context, 'Locker #$selectedLocker assigned');
-            } catch (e) { Toast.error(ctx, 'Failed to assign locker'); }
+                  // Laravel REST: POST /v1/lockers/assign
+                  await ref.read(apiClientProvider).assignLocker({
+                    'user_id': widget.memberId,
+                    'locker_id': selectedLocker,
+                    'assign_date': DateTime.now().toIso8601String().split('T')[0],
+                  });
+                  if (mounted) Navigator.pop(ctx);
+                  if (mounted) Toast.success(context, 'Locker #$selectedLocker assigned');
+                } catch (e) { Toast.error(ctx, 'Failed to assign locker'); }
               },
             ),
           ],
@@ -993,7 +1506,8 @@ class _MemberDetailScreenState extends ConsumerState<MemberDetailScreen> {
       await ref.read(apiClientProvider).hardDeleteMember(widget.memberId);
       if (mounted) {
         Toast.success(context, 'Member deleted');
-        Navigator.pop(context);
+        // Pop with a result so list screens can refresh immediately.
+        Navigator.pop(context, true);
       }
     } catch (e) {
       if (mounted) {
@@ -1003,5 +1517,66 @@ class _MemberDetailScreenState extends ConsumerState<MemberDetailScreen> {
         Toast.error(context, message);
       }
     }
+  }
+}
+
+/// Skeleton that mirrors the member-detail layout (hero → action tiles →
+/// section cards) using the light surface tokens.
+class _MemberDetailSkeleton extends StatelessWidget {
+  const _MemberDetailSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 40),
+      children: [
+        // Light hero card
+        Container(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: context.tokens.surface,
+            borderRadius: BorderRadius.circular(26),
+            border: Border.all(color: context.tokens.border),
+          ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              const ShimmerBox(width: 46, height: 46, radius: 16),
+              const SizedBox(width: 12),
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: const [
+                ShimmerBox(width: 140, height: 13, radius: 6),
+                SizedBox(height: 8),
+                ShimmerBox(width: 90, height: 10, radius: 5),
+              ]),
+              const Spacer(),
+              const ShimmerBox(width: 56, height: 22, radius: 999),
+            ]),
+            const SizedBox(height: 16),
+            const ShimmerBox(width: 90, height: 11, radius: 5),
+            const SizedBox(height: 8),
+            const ShimmerBox(height: 8, radius: 4),
+          ]),
+        ),
+        const SizedBox(height: 14),
+        // Tonal action tiles (2x2)
+        Row(children: const [
+          Expanded(child: ShimmerBox(height: 62, radius: 16)),
+          SizedBox(width: 10),
+          Expanded(child: ShimmerBox(height: 62, radius: 16)),
+        ]),
+        const SizedBox(height: 10),
+        Row(children: const [
+          Expanded(child: ShimmerBox(height: 62, radius: 16)),
+          SizedBox(width: 10),
+          Expanded(child: ShimmerBox(height: 62, radius: 16)),
+        ]),
+        const SizedBox(height: 10),
+        const ShimmerBox(height: 58, radius: 16),
+        const SizedBox(height: 18),
+        // Section cards
+        const ShimmerBox(height: 120, radius: 18),
+        const SizedBox(height: 12),
+        const ShimmerBox(height: 120, radius: 18),
+      ],
+    );
   }
 }

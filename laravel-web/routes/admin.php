@@ -55,6 +55,7 @@ Route::middleware(['auth', 'admin'])->group(function () {
     Route::put('/saas-plans/tiers/{id}', [SaasPlanController::class, 'updateTier'])->name('admin.saas-plans.tiers.update');
     Route::put('/saas-plans/features/{id}', [SaasPlanController::class, 'updateFeature'])->name('admin.saas-plans.features.update');
     Route::post('/saas-plans/tiers/{tierId}/card-features', [SaasPlanController::class, 'storeCardFeature'])->name('admin.saas-plans.card-features.store');
+    Route::post('/saas-plans/tiers/{tierId}/card-features/sync', [SaasPlanController::class, 'syncCardFeatures'])->name('admin.saas-plans.card-features.sync');
     Route::put('/saas-plans/card-features/{id}', [SaasPlanController::class, 'updateCardFeature'])->name('admin.saas-plans.card-features.update');
     Route::delete('/saas-plans/card-features/{id}', [SaasPlanController::class, 'destroyCardFeature'])->name('admin.saas-plans.card-features.destroy');
     Route::post('/saas-plans/tiers/{tierId}/prices', [SaasPlanController::class, 'storePrice'])->name('admin.saas-plans.prices.store');

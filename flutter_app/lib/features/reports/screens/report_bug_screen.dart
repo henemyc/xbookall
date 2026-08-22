@@ -129,7 +129,7 @@ class _ReportBugScreenState extends ConsumerState<ReportBugScreen> {
       body: GestureDetector(
         onTap: () => FocusScope.of(context).unfocus(),
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(20),
+          padding: EdgeInsets.fromLTRB(20, 20, 20, 20 + MediaQuery.of(context).padding.bottom),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -142,7 +142,7 @@ class _ReportBugScreenState extends ConsumerState<ReportBugScreen> {
                 ),
                 child: Row(
                   children: [
-                    const Icon(Icons.info_outline_rounded, color: AppTheme.brand),
+                    Icon(Icons.info_outline_rounded, color: AppTheme.brand),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Text(

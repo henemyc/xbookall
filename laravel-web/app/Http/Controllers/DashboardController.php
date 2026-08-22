@@ -7,6 +7,7 @@ use App\Models\TraineeDetail;
 use App\Models\Attendance;
 use App\Models\InvoicePayment;
 use App\Models\Expense;
+use App\Models\Membership;
 use App\Models\Setting;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -37,6 +38,8 @@ class DashboardController extends BaseController
         $trainerCount = User::where('type', 'trainer')
             ->whereIn('parent_id', $parentIds)
             ->count();
+
+        $planCount = Membership::whereIn('parent_id', $parentIds)->count();
 
         $attendanceCount = Attendance::whereIn('parent_id', $parentIds)
             ->where('date', now()->toDateString())
@@ -143,6 +146,7 @@ class DashboardController extends BaseController
             'stats' => [
                 'members' => $memberCount,
                 'trainers' => $trainerCount,
+                'plans' => $planCount,
                 'expiring_members' => $expiringCount,
                 'expiring_this_month' => $expiringThisMonth,
                 'attendance_today' => $attendanceCount,

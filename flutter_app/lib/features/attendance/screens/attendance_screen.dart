@@ -285,7 +285,7 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
                         ),
                       ])),
                       if (busy)
-                        const SizedBox(width: 34, height: 34, child: Padding(padding: EdgeInsets.all(7), child: CircularProgressIndicator(strokeWidth: 2.2, color: AppTheme.brand)))
+                        SizedBox(width: 34, height: 34, child: Padding(padding: EdgeInsets.all(7), child: CircularProgressIndicator(strokeWidth: 2.2, color: AppTheme.brand)))
                       else if (canCheckOut)
                         IconButton.filledTonal(
                           tooltip: 'Check Out',

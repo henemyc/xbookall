@@ -421,6 +421,7 @@ class MemberController extends BaseController
         if ($user->traineeDetails) {
             $user->trainee_status = $user->traineeDetails->status;
             $user->membership_expiry_date = $user->traineeDetails->membership_expiry_date;
+            $user->membership_start_date = $user->traineeDetails->membership_start_date;
             $user->plan_name = $user->traineeDetails->membership ? $user->traineeDetails->membership->title : null;
             // Edit Member reads root keys from this response.
             $user->address = $user->traineeDetails->address;

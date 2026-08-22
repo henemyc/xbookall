@@ -207,7 +207,7 @@ class _HelpSupportScreenState extends ConsumerState<HelpSupportScreen> {
         Text(_hindi ? article.answerHi : article.answerEn, style: context.typo.bodyMedium?.copyWith(color: context.tokens.textSecondary, height: 1.65)),
         if (article.tipEn.isNotEmpty) ...[
           const SizedBox(height: 18),
-          Container(padding: const EdgeInsets.all(14), decoration: BoxDecoration(color: AppTheme.brand.withOpacity(.08), borderRadius: BorderRadius.circular(14)), child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [const Icon(Icons.lightbulb_outline_rounded, color: AppTheme.brand, size: 20), const SizedBox(width: 10), Expanded(child: Text(_hindi ? article.tipHi : article.tipEn, style: context.typo.bodySmall?.copyWith(color: context.tokens.textSecondary, height: 1.45)))])),
+          Container(padding: const EdgeInsets.all(14), decoration: BoxDecoration(color: AppTheme.brand.withOpacity(.08), borderRadius: BorderRadius.circular(14)), child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [Icon(Icons.lightbulb_outline_rounded, color: AppTheme.brand, size: 20), const SizedBox(width: 10), Expanded(child: Text(_hindi ? article.tipHi : article.tipEn, style: context.typo.bodySmall?.copyWith(color: context.tokens.textSecondary, height: 1.45)))])),
         ],
       ]),
     ));

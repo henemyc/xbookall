@@ -499,9 +499,27 @@ class AuthController extends BaseController
     /**
      * Send a WhatsApp OTP to an existing, unambiguous account for passwordless login.
      */
-    public function sendLoginOtp(Request $request): JsonResponse
+    /**
+     * Check whether an active account exists for a phone number.
+     * Used by the login flow to decide whether to ask for a password.
+     * Response is intentionally minimal ({ exists }) — no account details leak.
+     */
+    public function checkAccount(Request $request): JsonResponse
     {
         $digits = $this->validatePhone(trim((string) $request->input('phone', '')));
+        if (is_string($digits)) return $this->error($digits, 400);
+        $digits = (string) $digits;
+
+        $count = User::where('is_active', true)
+            ->whereIn('type', ['admin', 'owner', 'trainee', 'trainer', 'staff'])
+            ->whereRaw("RIGHT(REPLACE(REPLACE(REPLACE(phone_number, '+', ''), ' ', ''), '-', ''), 10) = ?", [$digits])
+            ->count();
+
+        return $this->success(['exists' => $count > 0]);
+    }
+
+    public function sendLoginOtp(Request $request): JsonResponse
+    {        $digits = $this->validatePhone(trim((string) $request->input('phone', '')));
         if (is_string($digits)) return $this->error($digits, 400);
         $digits = (string) $digits;
 

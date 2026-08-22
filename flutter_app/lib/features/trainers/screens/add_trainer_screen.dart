@@ -149,7 +149,7 @@ class _AddTrainerScreenState extends ConsumerState<AddTrainerScreen> {
     return Scaffold(
       appBar: AppBar(title: Text(editing ? 'Edit Trainer' : 'Add Trainer')),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 40),
+        padding: EdgeInsets.fromLTRB(16, 8, 16, 40 + MediaQuery.of(context).padding.bottom),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           _hero(),
           const SizedBox(height: 14),

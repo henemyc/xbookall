@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/physics.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -98,6 +100,15 @@ class GymXBookApp extends ConsumerWidget {
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
       themeMode: mode,
+      // Cupertino (iOS) localizations so CupertinoDatePicker, text fields,
+      // search fields, etc. render correctly on the showcase & iOS builds.
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: const [Locale('en')],
+      locale: const Locale('en'),
       builder: (context, child) {
         // Keep system bars in sync with the resolved theme.
         final dark = Theme.of(context).brightness == Brightness.dark;
@@ -397,6 +408,8 @@ class AuthWrapper extends ConsumerStatefulWidget {
 
 class _AuthWrapperState extends ConsumerState<AuthWrapper> {
   bool _booting = true;
+  bool _authDone = false;
+  bool _minTimeDone = false;
 
   @override
   void initState() {
@@ -405,16 +418,39 @@ class _AuthWrapperState extends ConsumerState<AuthWrapper> {
     // Login attempts also set isLoading=true, but must not replace the landing
     // screen or disturb its open offcanvas sheet.
     ref.listenManual(authProvider, (previous, next) {
-      if (_booting && !next.isLoading && mounted) {
-        setState(() => _booting = false);
+      if (next.isLoading) return;
+      _authDone = true;
+      _maybeEndBoot();
+    });
+
+    // Keep the splash on screen for at least 2.5s, even when the session
+    // check finishes almost instantly.
+    Timer(const Duration(milliseconds: 2500), () {
+      if (!mounted) return;
+      _minTimeDone = true;
+      _maybeEndBoot();
+    });
+
+    // If auth was already resolved before the listener attached, end boot
+    // once the minimum splash time has passed.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && !ref.read(authProvider).isLoading) {
+        _authDone = true;
+        _maybeEndBoot();
       }
     });
+  }
+
+  void _maybeEndBoot() {
+    if (_booting && _authDone && _minTimeDone && mounted) {
+      setState(() => _booting = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final auth = ref.watch(authProvider);
-    if (_booting && auth.isLoading) return const _SplashScreen();
+    if (_booting) return const _SplashScreen();
     if (!auth.isLoggedIn) return const AuthOnboardingGate();
     // A token alone is not enough to render tenant pages. Prevent the old
     // fake "Your gym / 0 data" shell when /me has not verified this session.
@@ -452,32 +488,89 @@ class _SessionRecoveryScreen extends ConsumerWidget {
   }
 }
 
-class _SplashScreen extends StatelessWidget {
+class _SplashScreen extends StatefulWidget {
   const _SplashScreen();
   @override
+  State<_SplashScreen> createState() => _SplashScreenState();
+}
+
+class _SplashScreenState extends State<_SplashScreen> with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 1100))..forward();
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  CurvedAnimation _phase(double begin, double end, {Curve curve = Curves.easeOutCubic}) =>
+      CurvedAnimation(parent: _c, curve: Interval(begin, end, curve: curve));
+
+  @override
   Widget build(BuildContext context) {
+    final logo = _phase(0.0, 0.55);
+    final wordmark = _phase(0.35, 0.75);
+    final tagline = _phase(0.55, 0.9);
+    final loader = _phase(0.7, 1.0);
+
     return Scaffold(
-      backgroundColor: Colors.white,
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            TweenAnimationBuilder<double>(
-              tween: Tween(begin: 0.8, end: 1),
-              duration: const Duration(milliseconds: 600),
-              curve: Curves.easeOutCubic,
-              builder: (_, v, child) => Transform.scale(scale: v, child: child),
-              child: Image.asset(
-                'assets/images/gymxbook_logo_icon.png',
-                width: 120,
-                height: 120,
-              ),
+      // Full-screen flame-orange backdrop (no card) so the white logo pops.
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0xFFFF8A3D), Color(0xFFFF6B2C), Color(0xFFF43F1C)],
+          ),
+        ),
+        child: SafeArea(
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Logo — fade + scale + gentle slide (no card/tile)
+                AnimatedBuilder(
+                  animation: logo,
+                  builder: (context, child) => Opacity(
+                    opacity: logo.value.clamp(0.0, 1.0),
+                    child: Transform.translate(
+                      offset: Offset(0, 22 * (1 - logo.value)),
+                      child: Transform.scale(scale: 0.7 + 0.3 * logo.value, child: child),
+                    ),
+                  ),
+                  child: Image.asset('assets/images/gymxbook_foreground_logo.png', width: 132, height: 132, fit: BoxFit.contain),
+                ),
+                const SizedBox(height: 26),
+                // Wordmark — fade + slide up (white)
+                AnimatedBuilder(
+                  animation: wordmark,
+                  builder: (context, child) => Opacity(
+                    opacity: wordmark.value.clamp(0.0, 1.0),
+                    child: Transform.translate(offset: Offset(0, 16 * (1 - wordmark.value)), child: child),
+                  ),
+                  child: Text('GymXBook', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 30, fontWeight: FontWeight.w800, letterSpacing: -0.6)),
+                ),
+                const SizedBox(height: 8),
+                // Tagline — fade (white)
+                AnimatedBuilder(
+                  animation: tagline,
+                  builder: (context, child) => Opacity(opacity: tagline.value.clamp(0.0, 1.0), child: child),
+                  child: Text('Manage your gym like a pro', style: GoogleFonts.poppins(color: Colors.white.withOpacity(.9), fontSize: 12.5, fontWeight: FontWeight.w500)),
+                ),
+                const SizedBox(height: 44),
+                // White loading spinner
+                AnimatedBuilder(
+                  animation: loader,
+                  builder: (context, child) => Opacity(opacity: loader.value.clamp(0.0, 1.0), child: child),
+                  child: const SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(strokeWidth: 2.6, color: Colors.white),
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 20),
-            Text('GymXBook', style: GoogleFonts.spaceGrotesk(color: const Color(0xFF1A1210), fontSize: 28, fontWeight: FontWeight.w700, letterSpacing: -0.5)),
-            const SizedBox(height: 32),
-            const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.4, color: AppTheme.brand)),
-          ],
+          ),
         ),
       ),
     );
@@ -505,7 +598,7 @@ class _MainShellState extends ConsumerState<MainShell> with WidgetsBindingObserv
   bool _forceUpdateShown = false;
   bool _isOffline = false;
   Timer? _networkTimer;
-  static const String currentAppVersion = '1.2.0';
+  static const String currentAppVersion = '1.2.2';
 
   @override
   void initState() {
@@ -839,7 +932,7 @@ class _MainShellState extends ConsumerState<MainShell> with WidgetsBindingObserv
       if (_pageController.hasClients && !wasDeep) {
         // Suppress intermediate onPageChanged haptics during programmatic animation
         _isAnimating = true;
-        _pageController.animateToPage(index, duration: const Duration(milliseconds: 200), curve: Curves.easeOutCubic).then((_) {
+        _pageController.animateToPage(index, duration: const Duration(milliseconds: 120), curve: Curves.easeOutCubic).then((_) {
           _isAnimating = false;
         });
       } else {
@@ -1132,7 +1225,11 @@ class _MainShellState extends ConsumerState<MainShell> with WidgetsBindingObserv
               // Primary tabs → swipeable PageView with smooth animation.
               ? PageView.builder(
                   controller: _pageController,
-                  physics: const ClampingScrollPhysics(),
+                  physics: const _FastPageScrollPhysics(),
+                  // Use our own physics directly so its faster snap spring
+                  // takes effect (pageSnapping would wrap it in a default
+                  // PageScrollPhysics and ignore the faster spring).
+                  pageSnapping: false,
                   allowImplicitScrolling: false,
                   itemCount: _navCount,
                   onPageChanged: (i) {
@@ -1145,7 +1242,7 @@ class _MainShellState extends ConsumerState<MainShell> with WidgetsBindingObserv
                 )
               // Deeper drawer pages → simple fade, not part of the swipe set.
               : AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 260),
+                  duration: const Duration(milliseconds: 140),
                   transitionBuilder: (child, anim) => FadeTransition(opacity: anim, child: child),
                   child: KeyedSubtree(key: ValueKey(_index), child: pages[_index]),
                 ),
@@ -1378,7 +1475,7 @@ if (_showClassesForPlan) _item(Icons.self_improvement_rounded, 'Classes', 7, con
               child: Row(children: [
                 Text('GymXBook', style: context.typo.labelSmall?.copyWith(color: t.textTertiary, letterSpacing: 0.5)),
                 const Spacer(),
-                Text('v1.2.0', style: context.typo.labelSmall?.copyWith(color: t.textTertiary)),
+                Text('v1.2.2', style: context.typo.labelSmall?.copyWith(color: t.textTertiary)),
               ]),
             ),
           ],
@@ -1484,7 +1581,7 @@ if (_showClassesForPlan) _item(Icons.self_improvement_rounded, 'Classes', 7, con
               Container(width: 34, height: 34, decoration: BoxDecoration(color: iconBg, borderRadius: BorderRadius.circular(10)), child: Icon(icon, size: 18, color: iconColor)),
               const SizedBox(width: 12),
               Expanded(child: Text(title, style: context.typo.titleSmall?.copyWith(fontSize: 13.5, fontWeight: selected ? FontWeight.w700 : FontWeight.w500, color: selected ? t.text : t.textSecondary))),
-              if (selected) Container(width: 6, height: 6, decoration: const BoxDecoration(color: AppTheme.brand, shape: BoxShape.circle)),
+              if (selected) Container(width: 6, height: 6, decoration: BoxDecoration(color: AppTheme.brand, shape: BoxShape.circle)),
             ]),
           ),
         ),
@@ -1655,4 +1752,21 @@ class _ThemeToggleButton extends ConsumerWidget {
       ),
     );
   }
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  FAST PAGE SNAP — snappier manual swipe between bottom-nav tabs
+//  (Home → Members → Check In → Reports → History).
+//  Higher spring stiffness = pages settle into place much faster.
+// ══════════════════════════════════════════════════════════════════
+class _FastPageScrollPhysics extends PageScrollPhysics {
+  const _FastPageScrollPhysics({super.parent});
+
+  @override
+  _FastPageScrollPhysics applyTo(ScrollPhysics? ancestor) =>
+      _FastPageScrollPhysics(parent: buildParent(ancestor));
+
+  @override
+  SpringDescription get spring =>
+      SpringDescription.withDampingRatio(mass: 0.5, stiffness: 700.0, ratio: 1.1);
 }

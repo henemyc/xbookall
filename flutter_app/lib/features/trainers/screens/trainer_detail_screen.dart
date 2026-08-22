@@ -281,7 +281,10 @@ class _TrainerDetailScreenState extends ConsumerState<TrainerDetailScreen> {
         padding: const EdgeInsets.all(10),
         color: context.tokens.surfaceAlt,
         shadow: false,
-        onTap: id > 0 ? () => Navigator.push(context, MaterialPageRoute(builder: (_) => MemberDetailScreen(memberId: id, memberName: m['name'] ?? 'Member'))) : null,
+        onTap: id > 0 ? () async {
+          final changed = await Navigator.push<bool>(context, MaterialPageRoute(builder: (_) => MemberDetailScreen(memberId: id, memberName: m['name'] ?? 'Member')));
+          if (changed == true && mounted) _load();
+        } : null,
         child: Row(children: [
           GxAvatar(name: m['name'] ?? 'M', size: 38),
           const SizedBox(width: 10),

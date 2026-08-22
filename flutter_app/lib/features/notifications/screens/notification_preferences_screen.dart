@@ -40,7 +40,8 @@ class _NotificationPreferencesScreenState extends ConsumerState<NotificationPref
     }
   }
 
-  bool _value(String key) => prefs[key] == true || prefs[key]?.toString() == '1';
+  // All notification preferences default to ON (missing/NULL means enabled).
+  bool _value(String key) => prefs[key] == null ? true : (prefs[key] == true || prefs[key]?.toString() == '1');
 
   Future<void> _toggle(String key, bool value) async {
     final previous = Map<String, dynamic>.from(prefs);

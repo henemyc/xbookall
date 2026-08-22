@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:gymxbook/core/theme/app_theme.dart';
 
@@ -34,9 +35,22 @@ class AboveNavFabLocation extends FloatingActionButtonLocation {
 /// Themed snackbars with icon + accent color.
 /// Uses OverlayEntry so toasts always appear ON TOP of bottom sheets / dialogs.
 class Toast {
+  // Success → custom in-app toast. Everything else → Android native toast
+  // (falls back to the custom toast on iOS / if the native channel is missing).
   static void success(BuildContext context, String msg) => _show(context, msg, AppTheme.success, Icons.check_circle_rounded);
-  static void error(BuildContext context, String msg) => _show(context, msg, AppTheme.danger, Icons.error_rounded);
-  static void info(BuildContext context, String msg) => _show(context, msg, AppTheme.info, Icons.info_rounded);
+  static void error(BuildContext context, String msg) => _nativeOrCustom(context, msg, AppTheme.danger, Icons.error_rounded);
+  static void warning(BuildContext context, String msg) => _nativeOrCustom(context, msg, AppTheme.warning, Icons.warning_rounded);
+  static void info(BuildContext context, String msg) => _nativeOrCustom(context, msg, AppTheme.info, Icons.info_rounded);
+
+  static const _channel = MethodChannel('com.gymxbook.app/native_toast');
+
+  static void _nativeOrCustom(BuildContext context, String msg, Color color, IconData icon) {
+    _invokeNative(msg).catchError((_) {
+      if (context.mounted) _show(context, msg, color, icon);
+    });
+  }
+
+  static Future<void> _invokeNative(String msg) => _channel.invokeMethod<void>('show', {'message': msg});
 
   static void _show(BuildContext context, String msg, Color color, IconData icon) {
     // Try ScaffoldMessenger first (works when no sheet is open)
